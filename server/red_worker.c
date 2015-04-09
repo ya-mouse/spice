@@ -112,7 +112,7 @@
 
 #define RED_STREAM_DETACTION_MAX_DELTA (NANO_SECOND / 5)
 #define RED_STREAM_CONTINUS_MAX_DELTA (NANO_SECOND)
-#define RED_STREAM_TIMOUT (NANO_SECOND)
+#define RED_STREAM_TIMEOUT (NANO_SECOND)
 #define RED_STREAM_FRAMES_START_CONDITION 20
 #define RED_STREAM_GRADUAL_FRAMES_START_CONDITION 0.2
 #define RED_STREAM_FRAMES_RESET_CONDITION 100
@@ -2702,9 +2702,9 @@ static void red_streams_update_visible_region(RedWorker *worker, Drawable *drawa
     }
 }
 
-static inline unsigned int red_get_streams_timout(RedWorker *worker)
+static inline unsigned int red_get_streams_timeout(RedWorker *worker)
 {
-    unsigned int timout = -1;
+    unsigned int timeout = -1;
     Ring *ring = &worker->streams;
     RingItem *item = ring;
 
@@ -2713,17 +2713,17 @@ static inline unsigned int red_get_streams_timout(RedWorker *worker)
         Stream *stream;
 
         stream = SPICE_CONTAINEROF(item, Stream, link);
-        red_time_t delta = (stream->last_time + RED_STREAM_TIMOUT) - now;
+        red_time_t delta = (stream->last_time + RED_STREAM_TIMEOUT) - now;
 
         if (delta < NANO_MS) {
             return 0;
         }
-        timout = MIN(timout, (unsigned int)(delta / NANO_MS));
+        timeout = MIN(timeout, (unsigned int)(delta / NANO_MS));
     }
-    return timout;
+    return timeout;
 }
 
-static inline void red_handle_streams_timout(RedWorker *worker)
+static inline void red_handle_streams_timeout(RedWorker *worker)
 {
     Ring *ring = &worker->streams;
     RingItem *item;
@@ -2733,7 +2733,7 @@ static inline void red_handle_streams_timout(RedWorker *worker)
     while (item) {
         Stream *stream = SPICE_CONTAINEROF(item, Stream, link);
         item = ring_next(ring, item);
-        if (now >= (stream->last_time + RED_STREAM_TIMOUT)) {
+        if (now >= (stream->last_time + RED_STREAM_TIMEOUT)) {
             red_detach_stream_gracefully(worker, stream, NULL);
             red_stop_stream(worker, stream);
         }
@@ -3017,7 +3017,7 @@ static void red_create_stream(RedWorker *worker, Drawable *drawable)
     return;
 }
 
-static void red_disply_start_streams(DisplayChannelClient *dcc)
+static void red_display_start_streams(DisplayChannelClient *dcc)
 {
     Ring *ring = &dcc->common.worker->streams;
     RingItem *item = ring;
@@ -9552,7 +9552,7 @@ static void on_new_display_channel_client(DisplayChannelClient *dcc)
         red_push_surface_image(dcc, 0);
         red_push_monitors_config(dcc);
         red_pipe_add_verb(rcc, SPICE_MSG_DISPLAY_MARK);
-        red_disply_start_streams(dcc);
+        red_display_start_streams(dcc);
     }
 }
 
@@ -9906,7 +9906,7 @@ static int display_channel_handle_stream_report(DisplayChannelClient *dcc,
     }
 
     if (stream_report->unique_id != stream_agent->report_id) {
-        spice_warning("local reoprt-id (%u) != msg report-id (%u)",
+        spice_warning("local report-id (%u) != msg report-id (%u)",
                       stream_agent->report_id, stream_report->unique_id);
         return TRUE;
     }
@@ -11883,10 +11883,10 @@ SPICE_GNUC_NORETURN void *red_worker_main(void *arg)
 
         timeout = spice_timer_queue_get_timeout_ms();
         worker->event_timeout = MIN(timeout, worker->event_timeout);
-        timeout = red_get_streams_timout(worker);
+        timeout = red_get_streams_timeout(worker);
         worker->event_timeout = MIN(timeout, worker->event_timeout);
         num_events = poll(worker->poll_fds, MAX_EVENT_SOURCES, worker->event_timeout);
-        red_handle_streams_timout(worker);
+        red_handle_streams_timeout(worker);
         spice_timer_queue_cb();
 
         if (worker->display_channel) {

@@ -410,7 +410,7 @@ static void reds_reset_vdp(void)
      *  in order to be backward compatible with the client, we need to track the tokens
      *  even if the agent is detached. We don't destroy the char_device state, and
      *  instead we just reset it.
-     *  In addition, there used to be a misshandling of AGENT_TOKENS message in spice-gtk: it
+     *  In addition, there used to be a mishandling of AGENT_TOKENS message in spice-gtk: it
      *  overrides the amount of tokens, instead of adding the given amount.
      */
     if (red_channel_test_remote_cap(&reds->main_channel->base,
