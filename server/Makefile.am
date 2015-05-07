@@ -11,6 +11,7 @@ AM_CPPFLAGS =					\
 	$(SASL_CFLAGS)				\
 	$(SLIRP_CFLAGS)				\
 	$(SMARTCARD_CFLAGS)			\
+	$(GSTREAMER_1_0_CFLAGS)			\
 	$(SPICE_PROTOCOL_CFLAGS)		\
 	$(SSL_CFLAGS)				\
 	$(VISIBILITY_HIDDEN_CFLAGS)		\
@@ -42,6 +43,7 @@ libspice_server_la_LIBADD =						\
 	$(PIXMAN_LIBS)							\
 	$(SASL_LIBS)							\
 	$(SLIRP_LIBS)							\
+	$(GSTREAMER_1_0_LIBS)						\
 	$(SSL_LIBS)							\
 	$(Z_LIBS)							\
 	$(SPICE_NONPKGCONFIG_LIBS)					\
@@ -141,6 +143,12 @@ if SUPPORT_SMARTCARD
 libspice_server_la_SOURCES +=	\
 	smartcard.c		\
 	smartcard.h		\
+	$(NULL)
+endif
+
+if SUPPORT_GSTREAMER_1_0
+libspice_server_la_SOURCES +=	\
+	gstreamer_encoder.c			\
 	$(NULL)
 endif
 
