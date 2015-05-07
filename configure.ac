@@ -81,6 +81,30 @@ AS_IF([test x"$enable_opengl" != "xno"], [
 SPICE_CHECK_SMARTCARD([SMARTCARD])
 AM_CONDITIONAL(SUPPORT_SMARTCARD, test "x$have_smartcard" = "xyes")
 
+AC_ARG_ENABLE(gstreamer,
+              AS_HELP_STRING([--enable-gstreamer=@<:@auto/yes/no@:>@],
+                             [Enable GStreamer 1.0 support]),
+              [],
+              [enable_gstreamer="auto"])
+
+if test "x$enable_gstreamer" != "xno"; then
+    PKG_CHECK_MODULES(GSTREAMER_1_0, [gstreamer-1.0, gstreamer-app-1.0],
+                      [enable_gstreamer="yes"
+                       have_gstreamer_1_0="yes"],
+                      [have_gstreamer_1_0="no"])
+    if test "x$have_gstreamer_1_0" = "xyes"; then
+        AC_SUBST(GSTREAMER_1_0_CFLAGS)
+        AC_SUBST(GSTREAMER_1_0_LIBS)
+        AS_VAR_APPEND([SPICE_REQUIRES], [" gstreamer-1.0 gstreamer-app-1.0"])
+        AC_DEFINE([HAVE_GSTREAMER_1_0], [1], [Define if supporting GStreamer 1.0])
+    elif test "x$enable_gstreamer" = "xyes"; then
+        AC_MSG_ERROR([GStreamer 1.0 support requested but not found. You may set GSTREAMER_1_0_CFLAGS and GSTREAMER_1_0_LIBS to avoid the need to call pkg-config.])
+    fi
+else
+    have_gstreamer_1_0="no"
+fi
+AM_CONDITIONAL(SUPPORT_GSTREAMER_1_0, test "x$have_gstreamer_1_0" = "xyes")
+
 AC_ARG_ENABLE([automated_tests],
               AS_HELP_STRING([--enable-automated-tests], [Enable automated tests using spicy-screenshot (part of spice--gtk)]),,
               [enable_automated_tests="no"])
@@ -305,6 +329,8 @@ echo "
         LZ4 support:              ${enable_lz4}
 
         Smartcard:                ${have_smartcard}
+
+        GStreamer 1.0:            ${have_gstreamer_1_0}
 
         SASL support:             ${enable_sasl}
 
