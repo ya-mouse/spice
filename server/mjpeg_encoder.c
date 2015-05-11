@@ -1349,10 +1349,12 @@ static void mjpeg_encoder_get_stats(VideoEncoder *video_encoder,
     stats->avg_quality = (double)encoder->avg_quality / encoder->num_frames;
 }
 
-VideoEncoder *mjpeg_encoder_new(uint64_t starting_bit_rate,
+VideoEncoder *mjpeg_encoder_new(SpiceVideoCodecType codec_type,
+                                uint64_t starting_bit_rate,
                                 VideoEncoderRateControlCbs *cbs,
                                 void *cbs_opaque)
 {
+    spice_assert(codec_type == SPICE_VIDEO_CODEC_TYPE_MJPEG);
     spice_assert(!cbs || (cbs && cbs->get_roundtrip_ms && cbs->get_source_fps));
 
     MJpegEncoder *encoder = spice_new0(MJpegEncoder, 1);
@@ -1363,6 +1365,7 @@ VideoEncoder *mjpeg_encoder_new(uint64_t starting_bit_rate,
     encoder->base.notify_server_frame_drop = &mjpeg_encoder_notify_server_frame_drop;
     encoder->base.get_bit_rate = &mjpeg_encoder_get_bit_rate;
     encoder->base.get_stats = &mjpeg_encoder_get_stats;
+    encoder->base.codec_type = codec_type;
     encoder->first_frame = TRUE;
     encoder->rate_control.byte_rate = starting_bit_rate / 8;
     encoder->starting_bit_rate = starting_bit_rate;

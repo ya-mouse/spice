@@ -119,6 +119,9 @@ struct VideoEncoder {
      *              statistics.
      */
     void (*get_stats)(VideoEncoder *encoder, VideoEncoderStats *stats);
+
+    /* The codec being used by the video encoder */
+    SpiceVideoCodecType codec_type;
 };
 
 
@@ -148,6 +151,7 @@ typedef struct VideoEncoderRateControlCbs {
 
 /* Instantiates the video encoder.
  *
+ * @codec_type:        The codec to use.
  * @starting_bit_rate: An initial estimate of the available stream bit rate or
  *                     zero if the client does not support rate control.
  * @cbs:               A set of callback methods to be used for rate control.
@@ -155,13 +159,19 @@ typedef struct VideoEncoderRateControlCbs {
  * @return:            A pointer to a structure implementing the VideoEncoder
  *                     methods.
  */
-VideoEncoder* mjpeg_encoder_new(uint64_t starting_bit_rate,
+typedef VideoEncoder* (*new_video_encoder_t)(SpiceVideoCodecType codec_type, uint64_t starting_bit_rate, VideoEncoderRateControlCbs *cbs, void *cbs_opaque);
+
+VideoEncoder* mjpeg_encoder_new(SpiceVideoCodecType codec_type,
+                                uint64_t starting_bit_rate,
                                 VideoEncoderRateControlCbs *cbs,
                                 void *cbs_opaque);
 #ifdef HAVE_GSTREAMER_1_0
-VideoEncoder* gstreamer_encoder_new(uint64_t starting_bit_rate,
+VideoEncoder* gstreamer_encoder_new(SpiceVideoCodecType codec_type,
+                                    uint64_t starting_bit_rate,
                                     VideoEncoderRateControlCbs *cbs,
                                     void *cbs_opaque);
 #endif
+
+#define VIDEO_ENCODER_DEFAULT_PREFERENCE "spice:mjpeg;gstreamer:mjpeg;gstreamer:vp8"
 
 #endif
