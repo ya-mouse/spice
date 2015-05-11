@@ -141,6 +141,10 @@ AC_SUBST([SPICE_PROTOCOL_MIN_VER])
 PKG_CHECK_MODULES([GLIB2], [glib-2.0 >= 2.22])
 AS_VAR_APPEND([SPICE_REQUIRES], [" glib-2.0 >= 2.22"])
 
+AC_CHECK_LIB(glib-2.0, g_get_num_processors,
+             AC_DEFINE([HAVE_G_GET_NUMPROCESSORS], 1, [Defined if we have g_get_num_processors()]),,
+             $GLIB2_LIBS)
+
 PKG_CHECK_MODULES(PIXMAN, pixman-1 >= 0.17.7)
 AC_SUBST(PIXMAN_CFLAGS)
 AC_SUBST(PIXMAN_LIBS)
