@@ -776,6 +776,7 @@ struct Drawable {
     Ring glz_ring;
 
     red_time_t creation_time;
+    red_time_t first_frame_time;
     int frames_count;
     int gradual_frames_count;
     int last_gradual_frame;
@@ -841,6 +842,7 @@ typedef struct RedSurface {
 
 typedef struct ItemTrace {
     red_time_t time;
+    red_time_t first_frame_time;
     int frames_count;
     int gradual_frames_count;
     int last_gradual_frame;
@@ -1835,6 +1837,7 @@ static inline void red_add_item_trace(RedWorker *worker, Drawable *item)
 
     trace = &worker->items_trace[worker->next_item_trace++ & ITEMS_TRACE_MASK];
     trace->time = item->creation_time;
+    trace->first_frame_time = item->first_frame_time;
     trace->frames_count = item->frames_count;
     trace->gradual_frames_count = item->gradual_frames_count;
     trace->last_gradual_frame = item->last_gradual_frame;
@@ -3014,7 +3017,12 @@ static void red_create_stream(RedWorker *worker, Drawable *drawable)
     SpiceBitmap *bitmap = &drawable->red_drawable->u.copy.src_bitmap->u.bitmap;
     stream->top_down = !!(bitmap->flags & SPICE_BITMAP_FLAGS_TOP_DOWN);
     drawable->stream = stream;
-    stream->input_fps = MAX_FPS;
+    /* Provide an fps estimate the video encoder can use when initializing
+     * based on the frames that lead to the creation of the stream. Round to
+     * the nearest integer, for instance 24 for 23.976.
+     */
+    uint64_t duration = drawable->creation_time - drawable->first_frame_time;
+    stream->input_fps = ((uint64_t)drawable->frames_count * 1000 * 1000 * 1000 + duration / 2) / duration;
     stream->num_input_frames = 0;
     stream->input_fps_start_time = drawable->creation_time;
     worker->streams_size_total += stream->width * stream->height;
@@ -3027,9 +3035,9 @@ static void red_create_stream(RedWorker *worker, Drawable *drawable)
             return;
         }
     }
-    spice_debug("stream %d %dx%d (%d, %d) (%d, %d)", (int)(stream - worker->streams_buf), stream->width,
+    spice_debug("stream %d %dx%d (%d, %d) (%d, %d) %u fps", (int)(stream - worker->streams_buf), stream->width,
                 stream->height, stream->dest_area.left, stream->dest_area.top,
-                stream->dest_area.right, stream->dest_area.bottom);
+                stream->dest_area.right, stream->dest_area.bottom, stream->input_fps);
     return;
 }
 
@@ -3286,11 +3294,13 @@ static inline int red_is_stream_start(Drawable *drawable)
 // returns whether a stream was created
 static int red_stream_add_frame(RedWorker *worker,
                                 Drawable *frame_drawable,
+                                red_time_t first_frame_time,
                                 int frames_count,
                                 int gradual_frames_count,
                                 int last_gradual_frame)
 {
     red_update_copy_graduality(worker, frame_drawable);
+    frame_drawable->first_frame_time = first_frame_time;
     frame_drawable->frames_count = frames_count + 1;
     frame_drawable->gradual_frames_count  = gradual_frames_count;
 
@@ -3344,6 +3354,7 @@ static inline void red_stream_maintenance(RedWorker *worker, Drawable *candidate
     } else {
         if (red_is_next_stream_frame(worker, candidate, prev) != STREAM_FRAME_NONE) {
             red_stream_add_frame(worker, candidate,
+                                 prev->first_frame_time,
                                  prev->frames_count,
                                  prev->gradual_frames_count,
                                  prev->last_gradual_frame);
@@ -3505,6 +3516,7 @@ static inline void red_use_stream_trace(RedWorker *worker, Drawable *drawable)
                                        &trace->dest_area, trace->time, NULL, FALSE) !=
                                        STREAM_FRAME_NONE) {
             if (red_stream_add_frame(worker, drawable,
+                                     trace->first_frame_time,
                                      trace->frames_count,
                                      trace->gradual_frames_count,
                                      trace->last_gradual_frame)) {
@@ -3956,7 +3968,7 @@ static Drawable *get_drawable(RedWorker *worker, uint8_t effect, RedDrawable *re
     memset(drawable, 0, sizeof(Drawable));
     drawable->refs = 1;
     clock_gettime(CLOCK_MONOTONIC, &time);
-    drawable->creation_time = timespec_to_red_time(&time);
+    drawable->creation_time = drawable->first_frame_time = timespec_to_red_time(&time);
     ring_item_init(&drawable->list_link);
     ring_item_init(&drawable->surface_list_link);
     ring_item_init(&drawable->tree_item.base.siblings_link);
