@@ -90,7 +90,7 @@
 #include "spice_timer_queue.h"
 #include "main_dispatcher.h"
 #include "spice_server_utils.h"
-#include "red_time.h"
+#include "spice_time.h"
 #include "spice_bitmap_utils.h"
 #include "spice_image_cache.h"
 #include "pixmap-cache.h"
@@ -103,21 +103,21 @@
 #define CMD_RING_POLL_TIMEOUT 10 //milli
 #define CMD_RING_POLL_RETRIES 200
 
-#define DISPLAY_CLIENT_SHORT_TIMEOUT 15000000000ULL //nano
-#define DISPLAY_CLIENT_TIMEOUT 30000000000ULL //nano
-#define DISPLAY_CLIENT_MIGRATE_DATA_TIMEOUT 10000000000ULL //nano, 10 sec
+#define DISPLAY_CLIENT_SHORT_TIMEOUT (15 * NANO_SECOND)
+#define DISPLAY_CLIENT_TIMEOUT (30 * NANO_SECOND)
+#define DISPLAY_CLIENT_MIGRATE_DATA_TIMEOUT (10 * NANO_SECOND)
 #define DISPLAY_CLIENT_RETRY_INTERVAL 10000 //micro
 
 #define DISPLAY_FREE_LIST_DEFAULT_SIZE 128
 
-#define RED_STREAM_DETACTION_MAX_DELTA ((1000 * 1000 * 1000) / 5) // 1/5 sec
-#define RED_STREAM_CONTINUS_MAX_DELTA (1000 * 1000 * 1000)
-#define RED_STREAM_TIMOUT (1000 * 1000 * 1000)
+#define RED_STREAM_DETACTION_MAX_DELTA (NANO_SECOND / 5)
+#define RED_STREAM_CONTINUS_MAX_DELTA (NANO_SECOND)
+#define RED_STREAM_TIMOUT (NANO_SECOND)
 #define RED_STREAM_FRAMES_START_CONDITION 20
 #define RED_STREAM_GRADUAL_FRAMES_START_CONDITION 0.2
 #define RED_STREAM_FRAMES_RESET_CONDITION 100
 #define RED_STREAM_MIN_SIZE (96 * 96)
-#define RED_STREAM_INPUT_FPS_TIMEOUT ((uint64_t)5 * 1000 * 1000 * 1000) // 5 sec
+#define RED_STREAM_INPUT_FPS_TIMEOUT (5 * NANO_SECOND)
 #define RED_STREAM_CHANNEL_CAPACITY 0.8
 /* the client's stream report frequency is the minimum of the 2 values below */
 #define RED_STREAM_CLIENT_REPORT_WINDOW 5 // #frames
@@ -158,17 +158,12 @@ static void rendering_incorrect(const char *msg)
     spice_warning("rendering incorrect from now on: %s", msg);
 }
 
-static inline red_time_t timespec_to_red_time(struct timespec *time)
-{
-    return (red_time_t) time->tv_sec * (1000 * 1000 * 1000) + time->tv_nsec;
-}
-
 typedef unsigned long stat_time_t;
 
 #if defined(RED_WORKER_STAT) || defined(COMPRESS_STAT)
 double stat_cpu_time_to_sec(stat_time_t time)
 {
-    return (double)time / (1000 * 1000 * 1000);
+    return (double)time / NANO_SECOND;
 }
 
 typedef struct stat_info_s {
@@ -2430,7 +2425,7 @@ static void red_attach_stream(RedWorker *worker, Drawable *drawable, Stream *str
     uint64_t duration = drawable->creation_time - stream->input_fps_start_time;
     if (duration >= RED_STREAM_INPUT_FPS_TIMEOUT) {
         /* Round to the nearest integer, for instance 24 for 23.976 */
-        stream->input_fps = ((uint64_t)stream->num_input_frames * 1000 * 1000 * 1000 + duration / 2) / duration;
+        stream->input_fps = (NANO_SECOND * stream->num_input_frames + duration / 2) / duration;
         spice_debug("input-fps=%u", stream->input_fps);
         stream->num_input_frames = 0;
         stream->input_fps_start_time = drawable->creation_time;
@@ -2717,20 +2712,18 @@ static inline unsigned int red_get_streams_timout(RedWorker *worker)
     unsigned int timout = -1;
     Ring *ring = &worker->streams;
     RingItem *item = ring;
-    struct timespec time;
 
-    clock_gettime(CLOCK_MONOTONIC, &time);
-    red_time_t now = timespec_to_red_time(&time);
+    red_time_t now = nano_now();
     while ((item = ring_next(ring, item))) {
         Stream *stream;
 
         stream = SPICE_CONTAINEROF(item, Stream, link);
         red_time_t delta = (stream->last_time + RED_STREAM_TIMOUT) - now;
 
-        if (delta < 1000 * 1000) {
+        if (delta < NANO_MS) {
             return 0;
         }
-        timout = MIN(timout, (unsigned int)(delta / (1000 * 1000)));
+        timout = MIN(timout, (unsigned int)(delta / NANO_MS));
     }
     return timout;
 }
@@ -2738,11 +2731,9 @@ static inline unsigned int red_get_streams_timout(RedWorker *worker)
 static inline void red_handle_streams_timout(RedWorker *worker)
 {
     Ring *ring = &worker->streams;
-    struct timespec time;
     RingItem *item;
 
-    clock_gettime(CLOCK_MONOTONIC, &time);
-    red_time_t now = timespec_to_red_time(&time);
+    red_time_t now = nano_now();
     item = ring_get_head(ring);
     while (item) {
         Stream *stream = SPICE_CONTAINEROF(item, Stream, link);
@@ -3022,7 +3013,7 @@ static void red_create_stream(RedWorker *worker, Drawable *drawable)
      * the nearest integer, for instance 24 for 23.976.
      */
     uint64_t duration = drawable->creation_time - drawable->first_frame_time;
-    stream->input_fps = ((uint64_t)drawable->frames_count * 1000 * 1000 * 1000 + duration / 2) / duration;
+    stream->input_fps = (NANO_SECOND * drawable->frames_count + duration / 2) / duration;
     stream->num_input_frames = 0;
     stream->input_fps_start_time = drawable->creation_time;
     worker->streams_size_total += stream->width * stream->height;
@@ -3947,7 +3938,6 @@ static Drawable *get_drawable(RedWorker *worker, uint8_t effect, RedDrawable *re
                               uint32_t group_id)
 {
     Drawable *drawable;
-    struct timespec time;
     int x;
 
     VALIDATE_SURFACE_RETVAL(worker, red_drawable->surface_id, NULL)
@@ -3967,8 +3957,7 @@ static Drawable *get_drawable(RedWorker *worker, uint8_t effect, RedDrawable *re
     worker->drawable_count++;
     memset(drawable, 0, sizeof(Drawable));
     drawable->refs = 1;
-    clock_gettime(CLOCK_MONOTONIC, &time);
-    drawable->creation_time = drawable->first_frame_time = timespec_to_red_time(&time);
+    drawable->creation_time = drawable->first_frame_time = nano_now();
     ring_item_init(&drawable->list_link);
     ring_item_init(&drawable->surface_list_link);
     ring_item_init(&drawable->tree_item.base.siblings_link);
@@ -4769,7 +4758,7 @@ static int red_process_commands(RedWorker *worker, uint32_t max_pipe_size, int *
 {
     QXLCommandExt ext_cmd;
     int n = 0;
-    uint64_t start = red_now();
+    uint64_t start = nano_now();
 
     if (!worker->running) {
         *ring_is_empty = TRUE;
@@ -4869,7 +4858,7 @@ static int red_process_commands(RedWorker *worker, uint32_t max_pipe_size, int *
         n++;
         if ((worker->display_channel &&
              red_channel_all_blocked(&worker->display_channel->common.base))
-            || red_now() - start > 10 * 1000 * 1000) {
+            || nano_now() - start > NANO_SECOND / 100) {
             worker->event_timeout = 0;
             return n;
         }
@@ -8357,10 +8346,10 @@ static inline int red_marshall_stream_data(RedChannelClient *rcc,
     }
 
     StreamAgent *agent = &dcc->stream_agents[get_stream_id(worker, stream)];
-    uint64_t time_now = red_now();
+    uint64_t time_now = nano_now();
 
     if (!dcc->use_video_encoder_rate_control) {
-        if (time_now - agent->last_send_time < (1000 * 1000 * 1000) / agent->fps) {
+        if (time_now - agent->last_send_time < NANO_SECOND / agent->fps) {
             agent->frames--;
 #ifdef STREAM_STATS
             agent->stats.num_drops_fps++;
@@ -9508,7 +9497,7 @@ static inline void flush_display_commands(RedWorker *worker)
         if (ring_is_empty) {
             break;
         }
-        end_time = red_now() + DISPLAY_CLIENT_TIMEOUT;
+        end_time = nano_now() + DISPLAY_CLIENT_TIMEOUT;
         int sleep_count = 0;
         for (;;) {
             red_channel_push(&worker->display_channel->common.base);
@@ -9521,7 +9510,7 @@ static inline void flush_display_commands(RedWorker *worker)
             red_channel_send(channel);
             // TODO: MC: the whole timeout will break since it takes lowest timeout, should
             // do it client by client.
-            if (red_now() >= end_time) {
+            if (nano_now() >= end_time) {
                 spice_warning("update timeout");
                 red_disconnect_all_display_TODO_remove_me(channel);
             } else {
@@ -9552,7 +9541,7 @@ static inline void flush_cursor_commands(RedWorker *worker)
         if (ring_is_empty) {
             break;
         }
-        end_time = red_now() + DISPLAY_CLIENT_TIMEOUT;
+        end_time = nano_now() + DISPLAY_CLIENT_TIMEOUT;
         int sleep_count = 0;
         for (;;) {
             red_channel_push(&worker->cursor_channel->common.base);
@@ -9563,7 +9552,7 @@ static inline void flush_cursor_commands(RedWorker *worker)
             RedChannel *channel = (RedChannel *)worker->cursor_channel;
             red_channel_receive(channel);
             red_channel_send(channel);
-            if (red_now() >= end_time) {
+            if (nano_now() >= end_time) {
                 spice_warning("flush cursor timeout");
                 red_disconnect_cursor(channel);
             } else {
@@ -9596,7 +9585,7 @@ static void push_new_primary_surface(DisplayChannelClient *dcc)
 static int display_channel_client_wait_for_init(DisplayChannelClient *dcc)
 {
     dcc->expect_init = TRUE;
-    uint64_t end_time = red_now() + DISPLAY_CLIENT_TIMEOUT;
+    uint64_t end_time = nano_now() + DISPLAY_CLIENT_TIMEOUT;
     for (;;) {
         red_channel_client_receive(&dcc->common.base);
         if (!red_channel_client_is_connected(&dcc->common.base)) {
@@ -9612,7 +9601,7 @@ static int display_channel_client_wait_for_init(DisplayChannelClient *dcc)
             }
             return TRUE;
         }
-        if (red_now() > end_time) {
+        if (nano_now() > end_time) {
             spice_warning("timeout");
             red_channel_client_disconnect(&dcc->common.base);
             break;
@@ -11209,7 +11198,7 @@ void handle_dev_stop(void *opaque, void *payload)
 
 static int display_channel_wait_for_migrate_data(DisplayChannel *display)
 {
-    uint64_t end_time = red_now() + DISPLAY_CLIENT_MIGRATE_DATA_TIMEOUT;
+    uint64_t end_time = nano_now() + DISPLAY_CLIENT_MIGRATE_DATA_TIMEOUT;
     RedChannel *channel = &display->common.base;
     RedChannelClient *rcc;
 
@@ -11228,7 +11217,7 @@ static int display_channel_wait_for_migrate_data(DisplayChannel *display)
         if (!red_channel_client_waits_for_migrate_data(rcc)) {
             return TRUE;
         }
-        if (red_now() > end_time) {
+        if (nano_now() > end_time) {
             spice_warning("timeout");
             red_channel_client_disconnect(rcc);
             break;

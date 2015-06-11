@@ -20,6 +20,7 @@
 #endif
 
 #include "red_common.h"
+#include "spice_time.h"
 #include "video_encoder.h"
 
 #include <jerror.h>
@@ -68,7 +69,7 @@ static const int mjpeg_quality_samples[MJPEG_QUALITY_SAMPLE_NUM] = {20, 30, 40, 
  * are not necessarily related to mis-estimation of the bit rate, and we would
  * like to wait till the stream stabilizes.
  */
-#define MJPEG_WARMUP_TIME 3000LL // 3 sec
+#define MJPEG_WARMUP_TIME (3 * NANO_SECOND)
 
 /* The compressed buffer initial size. */
 #define MJPEG_INITIAL_BUFFER_SIZE (32 * 1024)
@@ -668,7 +669,7 @@ static void mjpeg_encoder_adjust_fps(MJpegEncoder *encoder, uint64_t now)
 
     spice_assert(rate_control_is_active(encoder));
 
-    adjusted_fps_time_passed = (now - rate_control->adjusted_fps_start_time) / 1000 / 1000;
+    adjusted_fps_time_passed = (now - rate_control->adjusted_fps_start_time) / NANO_MS;
 
     if (!rate_control->during_quality_eval &&
         adjusted_fps_time_passed > MJPEG_ADJUST_FPS_TIMEOUT &&
@@ -722,12 +723,8 @@ static int mjpeg_encoder_start_frame(MJpegEncoder *encoder,
 
     if (rate_control_is_active(encoder)) {
         MJpegEncoderRateControl *rate_control = &encoder->rate_control;
-        struct timespec time;
-        uint64_t now;
         uint64_t interval;
-
-        clock_gettime(CLOCK_MONOTONIC, &time);
-        now = ((uint64_t) time.tv_sec) * 1000000000 + time.tv_nsec;
+        uint64_t now = nano_now();
 
         if (!rate_control->adjusted_fps_start_time) {
             rate_control->adjusted_fps_start_time = now;
@@ -735,7 +732,7 @@ static int mjpeg_encoder_start_frame(MJpegEncoder *encoder,
         mjpeg_encoder_adjust_fps(encoder, now);
         interval = (now - rate_control->bit_rate_info.last_frame_time);
 
-        if (interval < (1000*1000*1000) / rate_control->adjusted_fps) {
+        if (interval < NANO_SECOND / rate_control->adjusted_fps) {
             return VIDEO_ENCODER_FRAME_DROP;
         }
 
@@ -1008,12 +1005,7 @@ static void mjpeg_encoder_decrease_bit_rate(MJpegEncoder *encoder)
     rate_control->client_state.max_video_latency = 0;
     rate_control->client_state.max_audio_latency = 0;
     if (rate_control->warmup_start_time) {
-        struct timespec time;
-        uint64_t now;
-
-        clock_gettime(CLOCK_MONOTONIC, &time);
-        now = ((uint64_t) time.tv_sec) * 1000000000 + time.tv_nsec;
-        if (now - rate_control->warmup_start_time < MJPEG_WARMUP_TIME*1000*1000) {
+        if (nano_now() - rate_control->warmup_start_time < MJPEG_WARMUP_TIME) {
             spice_debug("during warmup. ignoring");
             return;
         } else {
@@ -1026,7 +1018,7 @@ static void mjpeg_encoder_decrease_bit_rate(MJpegEncoder *encoder)
         double duration_sec;
 
         duration_sec = (bit_rate_info->last_frame_time - bit_rate_info->change_start_time);
-        duration_sec /= (1000.0 * 1000.0 * 1000.0);
+        duration_sec /= NANO_SECOND;
         measured_byte_rate = bit_rate_info->sum_enc_size / duration_sec;
         measured_fps = bit_rate_info->num_enc_frames / duration_sec;
         decrease_size = bit_rate_info->sum_enc_size / bit_rate_info->num_enc_frames;
@@ -1095,7 +1087,7 @@ static void mjpeg_encoder_increase_bit_rate(MJpegEncoder *encoder)
         double duration_sec;
 
         duration_sec = (bit_rate_info->last_frame_time - bit_rate_info->change_start_time);
-        duration_sec /= (1000.0 * 1000.0 * 1000.0);
+        duration_sec /= NANO_SECOND;
         measured_byte_rate = bit_rate_info->sum_enc_size / duration_sec;
         measured_fps = bit_rate_info->num_enc_frames / duration_sec;
         avg_frame_size = bit_rate_info->sum_enc_size / bit_rate_info->num_enc_frames;
@@ -1377,15 +1369,12 @@ VideoEncoder *mjpeg_encoder_new(SpiceVideoCodecType codec_type,
     encoder->starting_bit_rate = starting_bit_rate;
 
     if (cbs) {
-        struct timespec time;
-
-        clock_gettime(CLOCK_MONOTONIC, &time);
         encoder->cbs = *cbs;
         mjpeg_encoder_reset_quality(encoder, MJPEG_QUALITY_SAMPLE_NUM / 2, 5, 0);
         encoder->rate_control.during_quality_eval = TRUE;
         encoder->rate_control.quality_eval_data.type = MJPEG_QUALITY_EVAL_TYPE_SET;
         encoder->rate_control.quality_eval_data.reason = MJPEG_QUALITY_EVAL_REASON_RATE_CHANGE;
-        encoder->rate_control.warmup_start_time = ((uint64_t) time.tv_sec) * 1000000000 + time.tv_nsec;
+        encoder->rate_control.warmup_start_time = nano_now();
     } else {
         encoder->cbs.get_roundtrip_ms = NULL;
         mjpeg_encoder_reset_quality(encoder, MJPEG_LEGACY_STATIC_QUALITY_ID, MJPEG_MAX_FPS, 0);

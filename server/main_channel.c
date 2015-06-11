@@ -45,6 +45,7 @@
 #include "red_channel.h"
 #include "red_common.h"
 #include "reds.h"
+#include "spice_time.h"
 #include "migration_protocol.h"
 #include "main_dispatcher.h"
 
@@ -596,20 +597,13 @@ void main_channel_client_push_notify(MainChannelClient *mcc, const char *msg)
     red_channel_client_pipe_add_push(&mcc->base, item);
 }
 
-static uint64_t get_time_stamp(void)
-{
-    struct timespec time_space;
-    clock_gettime(CLOCK_MONOTONIC, &time_space);
-    return time_space.tv_sec * 1000 * 1000 * 1000 + time_space.tv_nsec;
-}
-
 static void main_channel_marshall_notify(RedChannelClient *rcc,
                                          SpiceMarshaller *m, NotifyPipeItem *item)
 {
     SpiceMsgNotify notify;
 
     red_channel_client_init_send_data(rcc, SPICE_MSG_NOTIFY, &item->base);
-    notify.time_stamp = get_time_stamp(); // TODO - move to main_new_notify_item
+    notify.time_stamp = nano_now(); // TODO - move to main_new_notify_item
     notify.severity = SPICE_NOTIFY_SEVERITY_WARN;
     notify.visibilty = SPICE_NOTIFY_VISIBILITY_HIGH;
     notify.what = SPICE_WARN_GENERAL;

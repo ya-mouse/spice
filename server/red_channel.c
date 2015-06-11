@@ -43,7 +43,7 @@
 #include "reds.h"
 #include "reds_stream.h"
 #include "main_dispatcher.h"
-#include "red_time.h"
+#include "spice_time.h"
 
 typedef struct EmptyMsgPipeItem {
     PipeItem base;
@@ -529,7 +529,6 @@ static void red_channel_client_send_empty_msg(RedChannelClient *rcc, PipeItem *b
 static void red_channel_client_send_ping(RedChannelClient *rcc)
 {
     SpiceMsgPing ping;
-    struct timespec ts;
 
     if (!rcc->latency_monitor.warmup_was_sent) { // latency test start
         int delay_val;
@@ -561,8 +560,7 @@ static void red_channel_client_send_ping(RedChannelClient *rcc)
 
     red_channel_client_init_send_data(rcc, SPICE_MSG_PING, NULL);
     ping.id = rcc->latency_monitor.id;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    ping.timestamp = ts.tv_sec * 1000000000LL + ts.tv_nsec;
+    ping.timestamp = nano_now();
     spice_marshall_msg_ping(rcc->send_data.marshaller, &ping);
     red_channel_client_begin_send_message(rcc);
 }
@@ -1367,7 +1365,7 @@ int red_channel_client_get_roundtrip_ms(RedChannelClient *rcc)
     if (rcc->latency_monitor.roundtrip < 0) {
         return rcc->latency_monitor.roundtrip;
     }
-    return rcc->latency_monitor.roundtrip / 1000 / 1000;
+    return rcc->latency_monitor.roundtrip / NANO_MS;
 }
 
 static void red_channel_client_init_outgoing_messages_window(RedChannelClient *rcc)
@@ -1427,14 +1425,9 @@ static void red_channel_handle_migrate_data(RedChannelClient *rcc, uint32_t size
 
 static void red_channel_client_restart_ping_timer(RedChannelClient *rcc)
 {
-    struct timespec ts;
     uint64_t passed, timeout;
 
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-
-    passed = ts.tv_sec * 1000000000LL + ts.tv_nsec;
-    passed = passed - rcc->latency_monitor.last_pong_time;
-    passed /= 1000*1000;
+    passed = (nano_now() - rcc->latency_monitor.last_pong_time) / NANO_MS;
     timeout = PING_TEST_IDLE_NET_TIMEOUT_MS;
     if (passed  < PING_TEST_TIMEOUT_MS) {
         timeout += PING_TEST_TIMEOUT_MS - passed;
@@ -1471,7 +1464,6 @@ static void red_channel_client_cancel_ping_timer(RedChannelClient *rcc)
 static void red_channel_client_handle_pong(RedChannelClient *rcc, SpiceMsgPing *ping)
 {
     uint64_t now;
-    struct timespec ts;
 
     /* ignoring unexpected pongs, or post-migration pongs for pings that
      * started just before migration */
@@ -1481,8 +1473,7 @@ static void red_channel_client_handle_pong(RedChannelClient *rcc, SpiceMsgPing *
         return;
     }
 
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    now =  ts.tv_sec * 1000000000LL + ts.tv_nsec;
+    now =  nano_now();
 
     if (rcc->latency_monitor.state == PING_STATE_WARMUP) {
         rcc->latency_monitor.state = PING_STATE_LATENCY;
@@ -1513,7 +1504,7 @@ static void red_channel_client_handle_pong(RedChannelClient *rcc, SpiceMsgPing *
     if (rcc->latency_monitor.roundtrip < 0 ||
         now - ping->timestamp < rcc->latency_monitor.roundtrip) {
         rcc->latency_monitor.roundtrip = now - ping->timestamp;
-        spice_debug("update roundtrip %.2f(ms)", rcc->latency_monitor.roundtrip/1000.0/1000.0);
+        spice_debug("update roundtrip %.2f(ms)", ((double)rcc->latency_monitor.roundtrip)/NANO_MS);
     }
 
     rcc->latency_monitor.last_pong_time = now;
@@ -2332,7 +2323,7 @@ int red_channel_client_wait_outgoing_item(RedChannelClient *rcc,
         return TRUE;
     }
     if (timeout != -1) {
-        end_time = red_now() + timeout;
+        end_time = nano_now() + timeout;
     } else {
         end_time = UINT64_MAX;
     }
@@ -2343,7 +2334,7 @@ int red_channel_client_wait_outgoing_item(RedChannelClient *rcc,
         red_channel_client_receive(rcc);
         red_channel_client_send(rcc);
     } while ((blocked = red_channel_client_blocked(rcc)) &&
-             (timeout == -1 || red_now() < end_time));
+             (timeout == -1 || nano_now() < end_time));
 
     if (blocked) {
         spice_warning("timeout");
@@ -2365,7 +2356,7 @@ int red_channel_client_wait_pipe_item_sent(RedChannelClient *rcc,
     spice_info(NULL);
 
     if (timeout != -1) {
-        end_time = red_now() + timeout;
+        end_time = nano_now() + timeout;
     } else {
         end_time = UINT64_MAX;
     }
@@ -2379,7 +2370,7 @@ int red_channel_client_wait_pipe_item_sent(RedChannelClient *rcc,
     red_channel_client_push(rcc);
 
     while((item_in_pipe = ring_item_is_linked(&item->link)) &&
-          (timeout == -1 || red_now() < end_time)) {
+          (timeout == -1 || nano_now() < end_time)) {
         usleep(CHANNEL_BLOCKED_SLEEP_DURATION);
         red_channel_client_receive(rcc);
         red_channel_client_send(rcc);
@@ -2392,7 +2383,7 @@ int red_channel_client_wait_pipe_item_sent(RedChannelClient *rcc,
         return FALSE;
     } else {
         return red_channel_client_wait_outgoing_item(rcc,
-                                                     timeout == -1 ? -1 : end_time - red_now());
+                                                     timeout == -1 ? -1 : end_time - nano_now());
     }
 }
 
@@ -2404,7 +2395,7 @@ int red_channel_wait_all_sent(RedChannel *channel,
     int blocked = FALSE;
 
     if (timeout != -1) {
-        end_time = red_now() + timeout;
+        end_time = nano_now() + timeout;
     } else {
         end_time = UINT64_MAX;
     }
@@ -2412,7 +2403,7 @@ int red_channel_wait_all_sent(RedChannel *channel,
     red_channel_push(channel);
     while (((max_pipe_size = red_channel_max_pipe_size(channel)) ||
            (blocked = red_channel_any_blocked(channel))) &&
-           (timeout == -1 || red_now() < end_time)) {
+           (timeout == -1 || nano_now() < end_time)) {
         spice_debug("pipe-size %u blocked %d", max_pipe_size, blocked);
         usleep(CHANNEL_BLOCKED_SLEEP_DURATION);
         red_channel_receive(channel);

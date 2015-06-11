@@ -27,6 +27,7 @@
 #include <gst/app/gstappsink.h>
 
 #include "red_common.h"
+#include "spice_time.h"
 #include "video_encoder.h"
 
 
@@ -36,9 +37,7 @@
 # define DO_ZERO_COPY
 #endif
 
-#define NANO_SECOND (1000000000LL)
 #define MILLI_SECOND (1000LL)
-#define NANO_MS (NANO_SECOND / MILLI_SECOND)
 
 typedef struct {
     SpiceBitmapFmt spice_format;
