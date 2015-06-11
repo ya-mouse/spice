@@ -4059,7 +4059,7 @@ static inline void red_process_drawable(RedWorker *worker, RedDrawable *red_draw
         return;
     }
 
-    red_drawable->mm_time = reds_get_mm_time();
+    red_drawable->mm_time = milli_now();
     surface_id = drawable->surface_id;
 
     worker->surfaces[surface_id].refs++;
@@ -8361,7 +8361,7 @@ static inline int red_marshall_stream_data(RedChannelClient *rcc,
     /* workaround for vga streams */
     frame_mm_time =  drawable->red_drawable->mm_time ?
                         drawable->red_drawable->mm_time :
-                        reds_get_mm_time();
+                        milli_now();
 
     ret = agent->video_encoder->encode_frame(agent->video_encoder,
                                              &image->u.bitmap, width, height,

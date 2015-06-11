@@ -49,7 +49,6 @@ void reds_handle_channel_event(int event, SpiceChannelEventInfo *info);
 
 void reds_disable_mm_time(void);
 void reds_enable_mm_time(void);
-uint32_t reds_get_mm_time(void);
 void reds_set_client_mouse_allowed(int is_client_mouse_allowed,
                                    int x_res, int y_res);
 void reds_register_channel(RedChannel *channel);
