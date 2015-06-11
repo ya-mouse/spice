@@ -37,7 +37,6 @@
 # define DO_ZERO_COPY
 #endif
 
-#define MILLI_SECOND (1000LL)
 
 typedef struct {
     SpiceBitmapFmt spice_format;

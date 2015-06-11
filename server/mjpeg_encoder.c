@@ -60,7 +60,7 @@ static const int mjpeg_quality_samples[MJPEG_QUALITY_SAMPLE_NUM] = {20, 30, 40, 
  * avoid interrupting the playback when there are temporary
  * incidents of instability (with respect to server and client drops)
  */
-#define MJPEG_MAX_CLIENT_PLAYBACK_DELAY 5000 // 5 sec
+#define MJPEG_MAX_CLIENT_PLAYBACK_DELAY (5 * MILLI_SECOND)
 
 /*
  * The stream starts after lossless frames were sent to the client,
