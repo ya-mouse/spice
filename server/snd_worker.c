@@ -34,6 +34,7 @@
 #include "main_channel.h"
 #include "reds.h"
 #include "red_dispatcher.h"
+#include "spice_time.h"
 #include "snd_worker.h"
 #include "common/snd_codec.h"
 #include "demarshallers.h"
@@ -641,7 +642,7 @@ static int snd_playback_send_start(PlaybackChannel *playback_channel)
     start.frequency = st->frequency;
     spice_assert(SPICE_INTERFACE_PLAYBACK_FMT == SPICE_INTERFACE_AUDIO_FMT_S16);
     start.format = SPICE_AUDIO_FMT_S16;
-    start.time = reds_get_mm_time();
+    start.time = milli_now();
     spice_marshall_msg_playback_start(channel->send_data.marshaller, &start);
 
     return snd_begin_send_message(channel);
@@ -788,7 +789,7 @@ static int playback_send_mode(PlaybackChannel *playback_channel)
     if (!snd_reset_send_data(channel, SPICE_MSG_PLAYBACK_MODE)) {
         return FALSE;
     }
-    mode.time = reds_get_mm_time();
+    mode.time = milli_now();
     mode.mode = playback_channel->mode;
     spice_marshall_msg_playback_mode(channel->send_data.marshaller, &mode);
 
@@ -1116,7 +1117,7 @@ SPICE_GNUC_VISIBLE void spice_server_playback_put_samples(SpicePlaybackInstance 
     if (playback_channel->pending_frame) {
         snd_playback_free_frame(playback_channel, playback_channel->pending_frame);
     }
-    frame->time = reds_get_mm_time();
+    frame->time = milli_now();
     playback_channel->pending_frame = frame;
     snd_set_command(&playback_channel->base, SND_PLAYBACK_PCM_MASK);
     snd_playback_send(&playback_channel->base);
