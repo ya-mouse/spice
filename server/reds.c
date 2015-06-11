@@ -70,6 +70,7 @@
 #include "smartcard.h"
 #endif
 #include "reds_stream.h"
+#include "spice_time.h"
 
 #include "reds-private.h"
 
@@ -1652,7 +1653,7 @@ static void reds_handle_main_link(RedLinkInfo *link)
     if (!mig_target) {
         main_channel_push_init(mcc, red_dispatcher_count(),
             reds->mouse_mode, reds->is_client_mouse_allowed,
-            reds_get_mm_time() - MM_TIME_DELTA,
+            milli_now() - MM_TIME_DELTA,
             red_dispatcher_qxl_ram_size());
         if (spice_name)
             main_channel_push_name(mcc, spice_name);
@@ -1798,7 +1799,7 @@ void reds_on_client_semi_seamless_migrate_complete(RedClient *client)
     // TODO: not doing net test. consider doing it on client_migrate_info
     main_channel_push_init(mcc, red_dispatcher_count(),
                            reds->mouse_mode, reds->is_client_mouse_allowed,
-                           reds_get_mm_time() - MM_TIME_DELTA,
+                           milli_now() - MM_TIME_DELTA,
                            red_dispatcher_qxl_ram_size());
     reds_link_mig_target_channels(client);
     main_channel_migrate_dst_complete(mcc);
@@ -2471,7 +2472,7 @@ static void reds_send_mm_time(void)
     }
     spice_debug(NULL);
     main_channel_push_multi_media_time(reds->main_channel,
-                                       reds_get_mm_time() - reds->mm_time_latency);
+                                       milli_now() - reds->mm_time_latency);
 }
 
 void reds_set_client_mm_time_latency(RedClient *client, uint32_t latency)
