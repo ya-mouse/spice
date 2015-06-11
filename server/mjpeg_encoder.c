@@ -350,15 +350,7 @@ static inline uint32_t mjpeg_encoder_get_latency(MJpegEncoder *encoder)
 
 static uint32_t get_max_fps(uint64_t frame_size, uint64_t bytes_per_sec)
 {
-    double fps;
-    double send_time_ms;
-
-    if (!bytes_per_sec) {
-        return 0;
-    }
-    send_time_ms = frame_size * 1000.0 / bytes_per_sec;
-    fps = send_time_ms ? 1000 / send_time_ms : MJPEG_MAX_FPS;
-    return fps;
+    return frame_size ? (bytes_per_sec + frame_size / 2) / frame_size : MJPEG_MAX_FPS;
 }
 
 static inline void mjpeg_encoder_reset_quality(MJpegEncoder *encoder,
