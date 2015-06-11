@@ -165,6 +165,14 @@ enum NetTestStage {
     NET_TEST_STAGE_COMPLETE,
 };
 
+static inline int64_t micro_now(void)
+{
+    struct timespec time;
+
+    clock_gettime(CLOCK_MONOTONIC, &time);
+    return 1000000LL * time.tv_sec + time.tv_nsec / 1000;
+}
+
 static void main_channel_release_pipe_item(RedChannelClient *rcc,
                                            PipeItem *base, int item_pushed);
 
@@ -371,14 +379,12 @@ static void main_channel_marshall_ping(RedChannelClient *rcc,
                                        PingPipeItem *item)
 {
     MainChannelClient *mcc = SPICE_CONTAINEROF(rcc, MainChannelClient, base);
-    struct timespec time_space;
     SpiceMsgPing ping;
     int size_left = item->size;
 
     red_channel_client_init_send_data(rcc, SPICE_MSG_PING, &item->base);
     ping.id = ++(mcc->ping_id);
-    clock_gettime(CLOCK_MONOTONIC, &time_space);
-    ping.timestamp = time_space.tv_sec * 1000000LL + time_space.tv_nsec / 1000LL;
+    ping.timestamp = micro_now();
     spice_marshall_msg_ping(m, &ping);
 
     while (size_left > 0) {
@@ -946,10 +952,8 @@ static int main_channel_handle_parsed(RedChannelClient *rcc, uint32_t size, uint
     case SPICE_MSGC_PONG: {
         SpiceMsgPing *ping = (SpiceMsgPing *)message;
         uint64_t roundtrip;
-        struct timespec ts;
 
-        clock_gettime(CLOCK_MONOTONIC, &ts);
-        roundtrip = ts.tv_sec * 1000000LL + ts.tv_nsec / 1000LL - ping->timestamp;
+        roundtrip = micro_now() - ping->timestamp;
 
         if (ping->id == mcc->net_test_id) {
             switch (mcc->net_test_stage) {
