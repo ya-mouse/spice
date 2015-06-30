@@ -309,11 +309,6 @@ static uint32_t get_network_latency(SpiceGstEncoder *encoder)
         encoder->cbs.get_roundtrip_ms(encoder->cbs.opaque) / 2 : 0;
 }
 
-static inline int rate_control_is_active(SpiceGstEncoder* encoder)
-{
-    return encoder->cbs.get_roundtrip_ms != NULL;
-}
-
 static void reset_pipeline(SpiceGstEncoder *encoder)
 {
     if (!encoder->pipeline) {
@@ -1266,9 +1261,8 @@ static int gst_encoder_encode_frame(VideoEncoder *video_encoder,
         return VIDEO_ENCODER_FRAME_UNSUPPORTED;
     }
 
-    if (rate_control_is_active(encoder) &&
-        (handle_server_drops(encoder, frame_mm_time) ||
-         frame_mm_time < encoder->next_frame)) {
+    if (handle_server_drops(encoder, frame_mm_time) ||
+        frame_mm_time < encoder->next_frame) {
         /* Drop the frame to limit the outgoing bit rate. */
         return VIDEO_ENCODER_FRAME_DROP;
     }
@@ -1455,8 +1449,8 @@ VideoEncoder *gstreamer_encoder_new(SpiceVideoCodecType codec_type,
     SpiceGstEncoder *encoder;
 
     spice_assert(GSTE_FRAME_STATISTICS_COUNT <= GSTE_HISTORY_SIZE);
+    spice_assert(cbs);
 
-    spice_assert(!cbs || (cbs && cbs->get_roundtrip_ms && cbs->get_source_fps));
     if (codec_type != SPICE_VIDEO_CODEC_TYPE_MJPEG &&
         codec_type != SPICE_VIDEO_CODEC_TYPE_VP8 &&
         codec_type != SPICE_VIDEO_CODEC_TYPE_H264) {
@@ -1480,9 +1474,7 @@ VideoEncoder *gstreamer_encoder_new(SpiceVideoCodecType codec_type,
     encoder->base.get_stats = &gst_encoder_get_stats;
     encoder->base.codec_type = codec_type;
 
-    if (cbs) {
-        encoder->cbs = *cbs;
-    }
+    encoder->cbs = *cbs;
     encoder->starting_bit_rate = starting_bit_rate;
 
     /* All the other fields are initialized to zero by spice_new0(). */

@@ -447,12 +447,9 @@ typedef struct StreamAgent {
     PipeItem create_item;
     PipeItem destroy_item;
     Stream *stream;
-    uint64_t last_send_time;
     VideoEncoder *video_encoder;
     DisplayChannelClient *dcc;
 
-    int frames;
-    int drops;
     int fps;
 
     uint32_t report_id;
@@ -655,7 +652,6 @@ struct DisplayChannelClient {
     QRegion surface_client_lossy_region[NUM_SURFACES];
 
     StreamAgent stream_agents[NUM_STREAMS];
-    int use_video_encoder_rate_control;
     uint32_t streams_max_latency;
     uint64_t streams_max_bit_rate;
 };
@@ -2506,13 +2502,12 @@ static void red_stop_stream(RedWorker *worker, Stream *stream)
         region_clear(&stream_agent->vis_region);
         region_clear(&stream_agent->clip);
         spice_assert(!pipe_item_is_linked(&stream_agent->destroy_item));
-        if (stream_agent->video_encoder && dcc->use_video_encoder_rate_control) {
+        if (stream_agent->video_encoder) {
             uint64_t stream_bit_rate = stream_agent->video_encoder->get_bit_rate(stream_agent->video_encoder);
-
             if (stream_bit_rate > dcc->streams_max_bit_rate) {
                 spice_debug("old max-bit-rate=%.2f new=%.2f",
-                dcc->streams_max_bit_rate / 8.0 / 1024.0 / 1024.0,
-                stream_bit_rate / 8.0 / 1024.0 / 1024.0);
+                            dcc->streams_max_bit_rate / 8.0 / 1024.0 / 1024.0,
+                            stream_bit_rate / 8.0 / 1024.0 / 1024.0);
                 dcc->streams_max_bit_rate = stream_bit_rate;
             }
         }
@@ -2933,30 +2928,20 @@ static int red_display_create_stream(DisplayChannelClient *dcc, Stream *stream)
     stream->refs++;
     spice_assert(region_is_empty(&agent->vis_region));
     if (stream->current) {
-        agent->frames = 1;
         region_clone(&agent->vis_region, &stream->current->tree_item.base.rgn);
         region_clone(&agent->clip, &agent->vis_region);
-    } else {
-        agent->frames = 0;
     }
-    agent->drops = 0;
     agent->fps = MAX_FPS;
     agent->dcc = dcc;
 
-    if (dcc->use_video_encoder_rate_control) {
-        VideoEncoderRateControlCbs video_cbs;
-        uint64_t initial_bit_rate;
+    VideoEncoderRateControlCbs video_cbs;
+    video_cbs.opaque = agent;
+    video_cbs.get_roundtrip_ms = red_stream_video_encoder_get_roundtrip;
+    video_cbs.get_source_fps = red_stream_video_encoder_get_source_fps;
+    video_cbs.update_client_playback_delay = red_stream_update_client_playback_latency;
 
-        video_cbs.opaque = agent;
-        video_cbs.get_roundtrip_ms = red_stream_video_encoder_get_roundtrip;
-        video_cbs.get_source_fps = red_stream_video_encoder_get_source_fps;
-        video_cbs.update_client_playback_delay = red_stream_update_client_playback_latency;
-
-        initial_bit_rate = red_stream_get_initial_bit_rate(dcc, stream);
-        agent->video_encoder = red_display_create_video_encoder(dcc, initial_bit_rate, &video_cbs);
-    } else {
-        agent->video_encoder = red_display_create_video_encoder(dcc, 0, NULL);
-    }
+    uint64_t initial_bit_rate = red_stream_get_initial_bit_rate(dcc, stream);
+    agent->video_encoder = red_display_create_video_encoder(dcc, initial_bit_rate, &video_cbs);
     if (agent->video_encoder == NULL) {
         stream->refs--;
         return FALSE;
@@ -3060,8 +3045,6 @@ static void red_display_client_init_streams(DisplayChannelClient *dcc)
         red_channel_pipe_item_init(channel, &agent->create_item, PIPE_ITEM_TYPE_STREAM_CREATE);
         red_channel_pipe_item_init(channel, &agent->destroy_item, PIPE_ITEM_TYPE_STREAM_DESTROY);
     }
-    dcc->use_video_encoder_rate_control =
-        red_channel_client_test_remote_cap(&dcc->common.base, SPICE_DISPLAY_CAP_STREAM_REPORT);
 }
 
 static void red_display_destroy_streams_agents(DisplayChannelClient *dcc)
@@ -3201,52 +3184,12 @@ static inline void pre_stream_item_swap(RedWorker *worker, Stream *stream, Drawa
         dcc = dpi->dcc;
         agent = &dcc->stream_agents[index];
 
-        if (!dcc->use_video_encoder_rate_control &&
-            !dcc->common.is_low_bandwidth) {
-            continue;
-        }
-
         if (pipe_item_is_linked(&dpi->dpi_pipe_item)) {
 #ifdef STREAM_STATS
             agent->stats.num_drops_pipe++;
 #endif
-            if (dcc->use_video_encoder_rate_control) {
-                agent->video_encoder->notify_server_frame_drop(agent->video_encoder);
-            } else {
-                ++agent->drops;
-            }
+            agent->video_encoder->notify_server_frame_drop(agent->video_encoder);
         }
-    }
-
-
-    WORKER_FOREACH_DCC_SAFE(worker, ring_item, next, dcc) {
-        double drop_factor;
-
-        agent = &dcc->stream_agents[index];
-
-        if (dcc->use_video_encoder_rate_control) {
-            continue;
-        }
-        if (agent->frames / agent->fps < FPS_TEST_INTERVAL) {
-            agent->frames++;
-            continue;
-        }
-        drop_factor = ((double)agent->frames - (double)agent->drops) /
-            (double)agent->frames;
-        spice_debug("stream %d: #frames %u #drops %u", index, agent->frames, agent->drops);
-        if (drop_factor == 1) {
-            if (agent->fps < MAX_FPS) {
-                agent->fps++;
-                spice_debug("stream %d: fps++ %u", index, agent->fps);
-            }
-        } else if (drop_factor < 0.9) {
-            if (agent->fps > 1) {
-                agent->fps--;
-                spice_debug("stream %d: fps--%u", index, agent->fps);
-            }
-        }
-        agent->frames = 1;
-        agent->drops = 0;
     }
 }
 
@@ -8346,17 +8289,6 @@ static inline int red_marshall_stream_data(RedChannelClient *rcc,
     }
 
     StreamAgent *agent = &dcc->stream_agents[get_stream_id(worker, stream)];
-    uint64_t time_now = nano_now();
-
-    if (!dcc->use_video_encoder_rate_control) {
-        if (time_now - agent->last_send_time < NANO_SECOND / agent->fps) {
-            agent->frames--;
-#ifdef STREAM_STATS
-            agent->stats.num_drops_fps++;
-#endif
-            return TRUE;
-        }
-    }
 
     /* workaround for vga streams */
     frame_mm_time =  drawable->red_drawable->mm_time ?
@@ -8371,7 +8303,6 @@ static inline int red_marshall_stream_data(RedChannelClient *rcc,
 
     switch (ret) {
     case VIDEO_ENCODER_FRAME_DROP:
-        spice_assert(dcc->use_video_encoder_rate_control);
 #ifdef STREAM_STATS
         agent->stats.num_drops_fps++;
 #endif
@@ -8413,7 +8344,6 @@ static inline int red_marshall_stream_data(RedChannelClient *rcc,
     }
     spice_marshaller_add_ref_full(base_marshaller, outbuf->data, outbuf->size,
                                   &red_release_video_encoder_buffer, outbuf);
-    agent->last_send_time = time_now;
 #ifdef STREAM_STATS
     agent->stats.num_frames_sent++;
     agent->stats.size_sent += outbuf->size;
@@ -8771,7 +8701,6 @@ static void red_display_marshall_stream_start(RedChannelClient *rcc,
     DisplayChannelClient *dcc = RCC_TO_DCC(rcc);
     Stream *stream = agent->stream;
 
-    agent->last_send_time = 0;
     spice_assert(stream);
     red_channel_client_init_send_data(rcc, SPICE_MSG_DISPLAY_STREAM_CREATE, NULL);
     SpiceMsgDisplayStreamCreate stream_create;
