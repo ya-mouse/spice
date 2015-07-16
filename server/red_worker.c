@@ -640,9 +640,6 @@ struct DisplayChannelClient {
     uint32_t palette_cache_items;
 
     struct {
-        uint32_t stream_outbuf_size;
-        uint8_t *stream_outbuf; // caution stream buffer is also used as compress bufs!!!
-
         RedCompressBuf *used_compress_bufs;
 
         FreeList free_list;
@@ -8301,6 +8298,12 @@ static inline void display_begin_send_message(RedChannelClient *rcc)
     red_channel_client_begin_send_message(rcc);
 }
 
+static void red_release_video_encoder_buffer(uint8_t *data, void *opaque)
+{
+    VideoBuffer *buffer = (VideoBuffer*)opaque;
+    buffer->free(buffer);
+}
+
 static inline int red_marshall_stream_data(RedChannelClient *rcc,
                   SpiceMarshaller *base_marshaller, Drawable *drawable)
 {
@@ -8310,7 +8313,7 @@ static inline int red_marshall_stream_data(RedChannelClient *rcc,
     SpiceImage *image;
     RedWorker *worker = dcc->common.worker;
     uint32_t frame_mm_time;
-    int n;
+    VideoBuffer *outbuf;
     int width, height;
     int ret;
 
@@ -8343,7 +8346,6 @@ static inline int red_marshall_stream_data(RedChannelClient *rcc,
 
     StreamAgent *agent = &dcc->stream_agents[get_stream_id(worker, stream)];
     uint64_t time_now = red_now();
-    size_t outbuf_size;
 
     if (!dcc->use_video_encoder_rate_control) {
         if (time_now - agent->last_send_time < (1000 * 1000 * 1000) / agent->fps) {
@@ -8360,13 +8362,11 @@ static inline int red_marshall_stream_data(RedChannelClient *rcc,
                         drawable->red_drawable->mm_time :
                         reds_get_mm_time();
 
-    outbuf_size = dcc->send_data.stream_outbuf_size;
     ret = agent->video_encoder->encode_frame(agent->video_encoder,
                                              &image->u.bitmap, width, height,
                                              &drawable->red_drawable->u.copy.src_area,
                                              stream->top_down, frame_mm_time,
-                                             &dcc->send_data.stream_outbuf,
-                                             &outbuf_size, &n);
+                                             &outbuf);
 
     switch (ret) {
     case VIDEO_ENCODER_FRAME_DROP:
@@ -8383,7 +8383,6 @@ static inline int red_marshall_stream_data(RedChannelClient *rcc,
         spice_error("bad return value (%d) from VideoEncoder::encode_frame", ret);
         return FALSE;
     }
-    dcc->send_data.stream_outbuf_size = outbuf_size;
 
     if (!drawable->sized_stream) {
         SpiceMsgDisplayStreamData stream_data;
@@ -8392,7 +8391,7 @@ static inline int red_marshall_stream_data(RedChannelClient *rcc,
 
         stream_data.base.id = get_stream_id(worker, stream);
         stream_data.base.multi_media_time = frame_mm_time;
-        stream_data.data_size = n;
+        stream_data.data_size = outbuf->size;
 
         spice_marshall_msg_display_stream_data(base_marshaller, &stream_data);
     } else {
@@ -8402,7 +8401,7 @@ static inline int red_marshall_stream_data(RedChannelClient *rcc,
 
         stream_data.base.id = get_stream_id(worker, stream);
         stream_data.base.multi_media_time = frame_mm_time;
-        stream_data.data_size = n;
+        stream_data.data_size = outbuf->size;
         stream_data.width = width;
         stream_data.height = height;
         stream_data.dest = drawable->red_drawable->bbox;
@@ -8411,12 +8410,12 @@ static inline int red_marshall_stream_data(RedChannelClient *rcc,
         rect_debug(&stream_data.dest);
         spice_marshall_msg_display_stream_data_sized(base_marshaller, &stream_data);
     }
-    spice_marshaller_add_ref(base_marshaller,
-                             dcc->send_data.stream_outbuf, n);
+    spice_marshaller_add_ref_full(base_marshaller, outbuf->data, outbuf->size,
+                                  &red_release_video_encoder_buffer, outbuf);
     agent->last_send_time = time_now;
 #ifdef STREAM_STATS
     agent->stats.num_frames_sent++;
-    agent->stats.size_sent += n;
+    agent->stats.size_sent += outbuf->size;
     agent->stats.end = frame_mm_time;
 #endif
 
@@ -9207,7 +9206,6 @@ static void display_channel_client_on_disconnect(RedChannelClient *rcc)
     dcc->pixmap_cache = NULL;
     red_release_glz(dcc);
     red_reset_palette_cache(dcc);
-    free(dcc->send_data.stream_outbuf);
     red_display_reset_compress_buf(dcc);
     free(dcc->send_data.free_list.res);
     red_display_destroy_streams_agents(dcc);
@@ -10523,7 +10521,6 @@ static void handle_new_display_channel(RedWorker *worker, RedClient *client, Red
 {
     DisplayChannel *display_channel;
     DisplayChannelClient *dcc;
-    size_t stream_buf_size;
 
     if (!worker->display_channel) {
         spice_warning("Display channel was not created");
@@ -10539,9 +10536,6 @@ static void handle_new_display_channel(RedWorker *worker, RedClient *client, Red
         return;
     }
     spice_info("New display (client %p) dcc %p stream %p", client, dcc, stream);
-    stream_buf_size = 32*1024;
-    dcc->send_data.stream_outbuf = spice_malloc(stream_buf_size);
-    dcc->send_data.stream_outbuf_size = stream_buf_size;
     red_display_init_glz_data(dcc);
 
     dcc->send_data.free_list.res =
