@@ -37,6 +37,12 @@ typedef struct {
     uint32_t bpp;
 } SpiceFormatForGStreamer;
 
+typedef struct SpiceGstVideoBuffer {
+    VideoBuffer base;
+    GstBuffer *gst_buffer;
+    GstMapInfo map;
+} SpiceGstVideoBuffer;
+
 typedef struct SpiceGstEncoder {
     VideoEncoder base;
 
@@ -77,6 +83,23 @@ typedef struct SpiceGstEncoder {
     /* The default bit rate */
 #   define GSTE_DEFAULT_BITRATE (8 * 1024 * 1024)
 } SpiceGstEncoder;
+
+
+/* ---------- The SpiceGstVideoBuffer implementation ---------- */
+
+static void gst_video_buffer_free(VideoBuffer *video_buffer)
+{
+    SpiceGstVideoBuffer *buffer = (SpiceGstVideoBuffer*)video_buffer;
+    gst_buffer_unref(buffer->gst_buffer);
+    free(buffer);
+}
+
+static SpiceGstVideoBuffer* create_gst_video_buffer(void)
+{
+    SpiceGstVideoBuffer *buffer = spice_new0(SpiceGstVideoBuffer, 1);
+    buffer->base.free = &gst_video_buffer_free;
+    return buffer;
+}
 
 
 /* ---------- Miscellaneous SpiceGstEncoder helpers ---------- */
@@ -396,28 +419,22 @@ static int push_raw_frame(SpiceGstEncoder *encoder, const SpiceBitmap *bitmap,
 
 /* A helper for gst_encoder_encode_frame(). */
 static int pull_compressed_buffer(SpiceGstEncoder *encoder,
-                                  uint8_t **outbuf, size_t *outbuf_size,
-                                  int *data_size)
+                                  VideoBuffer **video_buffer)
 {
     GstSample *sample = gst_app_sink_pull_sample(encoder->appsink);
     if (sample) {
-        GstMapInfo map;
-        GstBuffer *buffer = gst_sample_get_buffer(sample);
-        if (buffer && gst_buffer_map(buffer, &map, GST_MAP_READ)) {
-            int size = gst_buffer_get_size(buffer);
-            spice_assert(outbuf && outbuf_size);
-            if (!*outbuf || *outbuf_size < size) {
-                free(*outbuf);
-                *outbuf = spice_malloc(size);
-                *outbuf_size = size;
-            }
-            /* TODO Try to avoid this copy by changing the GstBuffer handling */
-            memcpy(*outbuf, map.data, size);
-            *data_size = size;
-            gst_buffer_unmap(buffer, &map);
+        SpiceGstVideoBuffer *buffer = create_gst_video_buffer();
+        buffer->gst_buffer = gst_sample_get_buffer(sample);
+        if (buffer->gst_buffer &&
+            gst_buffer_map(buffer->gst_buffer, &buffer->map, GST_MAP_READ)) {
+            buffer->base.data = buffer->map.data;
+            buffer->base.size = gst_buffer_get_size(buffer->gst_buffer);
+            *video_buffer = (VideoBuffer*)buffer;
+            gst_buffer_ref(buffer->gst_buffer);
             gst_sample_unref(sample);
             return VIDEO_ENCODER_FRAME_ENCODE_DONE;
         }
+        buffer->base.free((VideoBuffer*)buffer);
         gst_sample_unref(sample);
     }
     spice_debug("failed to pull the compressed buffer");
@@ -439,8 +456,7 @@ static int gst_encoder_encode_frame(VideoEncoder *video_encoder,
                                     int width, int height,
                                     const SpiceRect *src, int top_down,
                                     uint32_t frame_mm_time,
-                                    uint8_t **outbuf, size_t *outbuf_size,
-                                    int *data_size)
+                                    VideoBuffer **video_buffer)
 {
     SpiceGstEncoder *encoder = (SpiceGstEncoder*)video_encoder;
     if (width != encoder->width || height != encoder->height ||
@@ -466,7 +482,7 @@ static int gst_encoder_encode_frame(VideoEncoder *video_encoder,
 
     int rc = push_raw_frame(encoder, bitmap, src, top_down);
     if (rc == VIDEO_ENCODER_FRAME_ENCODE_DONE) {
-        rc = pull_compressed_buffer(encoder, outbuf, outbuf_size, data_size);
+        rc = pull_compressed_buffer(encoder, video_buffer);
     }
     return rc;
 }

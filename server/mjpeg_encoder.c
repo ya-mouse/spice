@@ -70,6 +70,9 @@ static const int mjpeg_quality_samples[MJPEG_QUALITY_SAMPLE_NUM] = {20, 30, 40, 
  */
 #define MJPEG_WARMUP_TIME 3000LL // 3 sec
 
+/* The compressed buffer initial size. */
+#define MJPEG_INITIAL_BUFFER_SIZE (32 * 1024)
+
 enum {
     MJPEG_QUALITY_EVAL_TYPE_SET,
     MJPEG_QUALITY_EVAL_TYPE_UPGRADE,
@@ -154,6 +157,11 @@ typedef struct MJpegEncoderRateControl {
     uint64_t warmup_start_time;
 } MJpegEncoderRateControl;
 
+typedef struct MJpegVideoBuffer {
+    VideoBuffer base;
+    size_t maxsize;
+} MJpegVideoBuffer;
+
 typedef struct MJpegEncoder {
     VideoEncoder base;
     uint8_t *row;
@@ -180,6 +188,22 @@ static void mjpeg_encoder_process_server_drops(MJpegEncoder *encoder);
 static uint32_t get_min_required_playback_delay(uint64_t frame_enc_size,
                                                 uint64_t byte_rate,
                                                 uint32_t latency);
+
+static void mjpeg_buffer_free(VideoBuffer *video_buffer)
+{
+    MJpegVideoBuffer *buffer = (MJpegVideoBuffer*)video_buffer;
+    free(buffer->base.data);
+    free(buffer);
+}
+
+static MJpegVideoBuffer* create_mjpeg_video_buffer(void)
+{
+    MJpegVideoBuffer *buffer = spice_new0(MJpegVideoBuffer, 1);
+    buffer->base.free = &mjpeg_buffer_free;
+    buffer->maxsize = MJPEG_INITIAL_BUFFER_SIZE;
+    buffer->base.data = malloc(buffer->maxsize);
+    return buffer;
+}
 
 static inline int rate_control_is_active(MJpegEncoder* encoder)
 {
@@ -283,24 +307,22 @@ static void term_mem_destination(j_compress_ptr cinfo)
 
 /*
  * Prepare for output to a memory buffer.
- * The caller may supply an own initial buffer with appropriate size.
- * Otherwise, or when the actual data output exceeds the given size,
- * the library adapts the buffer size as necessary.
- * The standard library functions malloc/free are used for allocating
- * larger memory, so the buffer is available to the application after
- * finishing compression, and then the application is responsible for
- * freeing the requested memory.
+ * The caller must supply its own initial buffer and size.
+ * When the actual data output exceeds the given size, the library
+ * will adapt the buffer size as necessary using the malloc()/free()
+ * functions. The buffer is available to the application after the
+ * compression and the application is then responsible for freeing it.
  */
-
 static void
 spice_jpeg_mem_dest(j_compress_ptr cinfo,
                     unsigned char ** outbuffer, size_t * outsize)
 {
   mem_destination_mgr *dest;
-#define OUTPUT_BUF_SIZE  4096	/* choose an efficiently fwrite'able size */
 
-  if (outbuffer == NULL || outsize == NULL)	/* sanity check */
+  if (outbuffer == NULL || *outbuffer == NULL ||
+      outsize == NULL || *outsize == 0) { /* sanity check */
     ERREXIT(cinfo, JERR_BUFFER_SIZE);
+  }
 
   /* The destination object is made permanent so that multiple JPEG images
    * can be written to the same buffer without re-executing jpeg_mem_dest.
@@ -315,13 +337,6 @@ spice_jpeg_mem_dest(j_compress_ptr cinfo,
   dest->pub.term_destination = term_mem_destination;
   dest->outbuffer = outbuffer;
   dest->outsize = outsize;
-  if (*outbuffer == NULL || *outsize == 0) {
-    /* Allocate initial buffer */
-    *outbuffer = malloc(OUTPUT_BUF_SIZE);
-    if (*outbuffer == NULL)
-      ERREXIT1(cinfo, JERR_OUT_OF_MEMORY, 10);
-    *outsize = OUTPUT_BUF_SIZE;
-  }
 
   dest->pub.next_output_byte = dest->buffer = *outbuffer;
   dest->pub.free_in_buffer = dest->bufsize = *outsize;
@@ -709,7 +724,7 @@ static void mjpeg_encoder_adjust_fps(MJpegEncoder *encoder, uint64_t now)
 static int mjpeg_encoder_start_frame(MJpegEncoder *encoder,
                                      SpiceBitmapFmt format,
                                      int width, int height,
-                                     uint8_t **dest, size_t *dest_len,
+                                     MJpegVideoBuffer *buffer,
                                      uint32_t frame_mm_time)
 {
     uint32_t quality;
@@ -793,7 +808,7 @@ static int mjpeg_encoder_start_frame(MJpegEncoder *encoder,
         }
     }
 
-    spice_jpeg_mem_dest(&encoder->cinfo, dest, dest_len);
+    spice_jpeg_mem_dest(&encoder->cinfo, &buffer->base.data, &buffer->maxsize);
 
     encoder->cinfo.image_width      = width;
     encoder->cinfo.image_height     = height;
@@ -934,25 +949,26 @@ static int mjpeg_encoder_encode_frame(VideoEncoder *video_encoder,
                                       int width, int height,
                                       const SpiceRect *src,
                                       int top_down, uint32_t frame_mm_time,
-                                      uint8_t **outbuf, size_t *outbuf_size,
-                                      int *data_size)
+                                      VideoBuffer **video_buffer)
 {
     MJpegEncoder *encoder = (MJpegEncoder*)video_encoder;
+    MJpegVideoBuffer *buffer = create_mjpeg_video_buffer();
 
-    int ret = mjpeg_encoder_start_frame(encoder, bitmap->format,
-                                        width, height, outbuf, outbuf_size,
-                                        frame_mm_time);
+    int ret = mjpeg_encoder_start_frame(encoder, bitmap->format, width, height,
+                                        buffer, frame_mm_time);
+    if (ret == VIDEO_ENCODER_FRAME_ENCODE_DONE) {
+        if (encode_frame(encoder, src, bitmap, top_down)) {
+            buffer->base.size = mjpeg_encoder_end_frame(encoder);
+            *video_buffer = (VideoBuffer*)buffer;
+        } else {
+            ret = VIDEO_ENCODER_FRAME_UNSUPPORTED;
+        }
+    }
+
     if (ret != VIDEO_ENCODER_FRAME_ENCODE_DONE) {
-        return ret;
+        buffer->base.free((VideoBuffer*)buffer);
     }
-
-    if (!encode_frame(encoder, src, bitmap, top_down)) {
-        return VIDEO_ENCODER_FRAME_UNSUPPORTED;
-    }
-
-    *data_size = mjpeg_encoder_end_frame(encoder);
-
-    return VIDEO_ENCODER_FRAME_ENCODE_DONE;
+    return ret;
 }
 
 
