@@ -53,6 +53,12 @@ typedef struct {
     uint32_t size;
 } GstFrameInformation;
 
+enum GstBitRateStatus {
+    GSTE_BITRATE_DECREASING,
+    GSTE_BITRATE_INCREASING,
+    GSTE_BITRATE_STABLE,
+};
+
 typedef struct SpiceGstEncoder {
     VideoEncoder base;
 
@@ -89,6 +95,12 @@ typedef struct SpiceGstEncoder {
     /* The frame counter for GStreamer buffers */
     uint32_t frame;
 
+    /* The GStreamer bit rate. */
+    uint64_t video_bit_rate;
+
+    /* Don't bother changing the GStreamer bit rate if close enough. */
+#   define GSTE_VIDEO_BITRATE_MARGIN 0.05
+
 
     /* ---------- Encoded frame statistics ---------- */
 
@@ -123,7 +135,7 @@ typedef struct SpiceGstEncoder {
 
     /* ---------- Encoder bit rate control ----------
      *
-     * GStreamer encoders don't follow the specified bit rate very
+     * GStreamer encoders don't follow the specified video_bit_rate very
      * closely. These fields are used to ensure we don't exceed the desired
      * stream bit rate, regardless of the GStreamer encoder's output.
      */
@@ -131,7 +143,7 @@ typedef struct SpiceGstEncoder {
     /* The bit rate target for the outgoing network stream. (bits per second) */
     uint64_t bit_rate;
 
-    /* The minimum bit rate */
+    /* The minimum bit rate / bit rate increment. */
 #   define GSTE_MIN_BITRATE (128 * 1024)
 
     /* The default bit rate */
@@ -157,6 +169,89 @@ typedef struct SpiceGstEncoder {
 
     /* How big of a margin to take to cover for latency jitter. */
 #   define GSTE_LATENCY_MARGIN 0.1
+
+
+    /* ---------- Network bit rate control ----------
+     *
+     * State information for figuring out the optimal bit rate for the current
+     * network conditions.
+     */
+
+    /* The mm_time of the last bit rate change. */
+    uint32_t last_change;
+
+    /* How much to reduce the bit rate in case of network congestion. */
+#   define GSTE_BITRATE_CUT 2
+#   define GSTE_BITRATE_REDUCE (4.0 / 3.0)
+
+    /* Never increase the bit rate by more than this amount (bits per second). */
+#   define GSTE_BITRATE_MAX_STEP (1024 * 1024)
+
+    /* The maximum bit rate that one can maybe use without causing network
+     * congestion.
+     */
+    uint64_t max_bit_rate;
+
+    /* The last bit rate that let us recover from network congestion. */
+    uint64_t min_bit_rate;
+
+    /* Defines when the spread between max_bit_rate and min_bit_rate has been
+     * narrowed down enough. Note that this value should be large enough for
+     * min_bit_rate to allow recovery from network congestion in a reasonable
+     * time frame, and to absorb transient traffic spikes (potentially from
+     * other sources).
+     * This is also used as a multiplier for the video_bit_rate so it does not
+     * have to be changed too often.
+     */
+#   define GSTE_BITRATE_MARGIN GSTE_BITRATE_REDUCE
+
+    /* Whether the bit rate was last decreased, increased or kept stable. */
+    enum GstBitRateStatus status;
+
+    /* The network bit rate control uses an AIMD scheme (Additive Increase,
+     * Multiplicative Decrease). The increment step depends on the spread
+     * between the minimum and maximum bit rates.
+     */
+    uint64_t bit_rate_step;
+
+    /* How often to increase the bit rate. */
+    uint32_t increase_interval;
+
+#   define GSTE_BITRATE_UP_INTERVAL (2 * MILLI_SECOND)
+#   define GSTE_BITRATE_UP_CLIENT_STABLE (2 * 60 * MILLI_SECOND)
+#   define GSTE_BITRATE_UP_SERVER_STABLE (4 * 60 * 60 * MILLI_SECOND)
+#   define GSTE_BITRATE_UP_RESET_MAX (30 * MILLI_SECOND)
+
+
+    /* ---------- Client feedback ---------- */
+
+    /* TRUE if gst_encoder_client_stream_report() is being called. */
+    gboolean has_client_reports;
+
+    /* The margin is the amount of time between the reception of a piece of
+     * media data by the client and the time when it should be played/displayed.
+     * Increasing the bit rate increases the transmission time and thus reduces
+     * the margin.
+     */
+    int32_t last_video_margin;
+    int32_t max_video_margin;
+    uint32_t max_audio_margin;
+
+#   define GSTE_VIDEO_MARGIN_GOOD 0.75
+#   define GSTE_VIDEO_MARGIN_AVERAGE 0.5
+#   define GSTE_VIDEO_MARGIN_BAD 0.3
+
+#   define GSTE_VIDEO_DELTA_BAD 0.2
+#   define GSTE_VIDEO_DELTA_AVERAGE 0.15
+
+#   define GSTE_AUDIO_MARGIN_BAD 0.5
+#   define GSTE_AUDIO_VIDEO_RATIO 1.25
+
+
+    /* ---------- Server feedback ---------- */
+
+    /* How many frames were dropped by the server since the last encoded frame. */
+    uint32_t server_drops;
 } SpiceGstEncoder;
 
 
@@ -344,6 +439,14 @@ static void add_frame(SpiceGstEncoder *encoder, uint32_t frame_mm_time,
 
 /* ---------- Encoder bit rate control ---------- */
 
+static void set_video_bit_rate(SpiceGstEncoder *encoder, uint64_t bit_rate)
+{
+    if (abs(bit_rate - encoder->video_bit_rate) > encoder->video_bit_rate * GSTE_VIDEO_BITRATE_MARGIN) {
+        encoder->video_bit_rate = bit_rate;
+        reset_pipeline(encoder);
+    }
+}
+
 static uint32_t get_min_playback_delay(SpiceGstEncoder *encoder)
 {
     /* Make sure the delay is large enough to send a large frame (typically an
@@ -385,6 +488,12 @@ static void update_next_frame(SpiceGstEncoder *encoder)
 
     delay_ns = drops * period_ns + period_ns / 2;
     if (delay_ns > GSTE_MAX_PERIOD) {
+        /* Reduce the video bit rate so we don't have to drop so many frames. */
+        if (encoder->video_bit_rate > encoder->bit_rate * GSTE_BITRATE_MARGIN) {
+            set_video_bit_rate(encoder, encoder->bit_rate * GSTE_BITRATE_MARGIN);
+        } else {
+            set_video_bit_rate(encoder, encoder->bit_rate);
+        }
         delay_ns = GSTE_MAX_PERIOD;
     }
     encoder->next_frame = get_last_frame_mm_time(encoder) + delay_ns / NANO_MS;
@@ -409,19 +518,165 @@ static uint64_t get_bit_rate_cap(SpiceGstEncoder *encoder)
     return raw_frame_bits * get_source_fps(encoder) / 10;
 }
 
-static void adjust_bit_rate(SpiceGstEncoder *encoder)
+static void set_bit_rate(SpiceGstEncoder *encoder, uint64_t bit_rate)
 {
-    if (encoder->bit_rate == 0) {
-        /* Use the default value, */
-        encoder->bit_rate = GSTE_DEFAULT_BITRATE;
-    } else if (encoder->bit_rate < GSTE_MIN_BITRATE) {
-        /* don't let the bit rate go too low */
-        encoder->bit_rate = GSTE_MIN_BITRATE;
-    } else {
-        /* or too high */
-        encoder->bit_rate = MIN(encoder->bit_rate, get_bit_rate_cap(encoder));
+    if (bit_rate == 0) {
+        /* Use the default value */
+        bit_rate = GSTE_DEFAULT_BITRATE;
     }
-    spice_debug("adjust_bit_rate(%.3fMbps)", get_mbps(encoder->bit_rate));
+    if (bit_rate == encoder->bit_rate) {
+        return;
+    }
+    if (bit_rate < GSTE_MIN_BITRATE) {
+        /* Don't let the bit rate go too low... */
+        encoder->bit_rate = GSTE_MIN_BITRATE;
+    } else if (bit_rate > encoder->bit_rate) {
+        /* or too high */
+        bit_rate = MIN(bit_rate, get_bit_rate_cap(encoder));
+    }
+
+    if (bit_rate < encoder->min_bit_rate) {
+        encoder->min_bit_rate = bit_rate;
+        encoder->bit_rate_step = 0;
+    } else if (encoder->status == GSTE_BITRATE_DECREASING &&
+               bit_rate > encoder->bit_rate) {
+        encoder->min_bit_rate = encoder->bit_rate;
+        encoder->bit_rate_step = 0;
+    } else if (encoder->status != GSTE_BITRATE_DECREASING &&
+               bit_rate < encoder->bit_rate) {
+        encoder->max_bit_rate = encoder->bit_rate - GSTE_MIN_BITRATE;
+        encoder->bit_rate_step = 0;
+    }
+    encoder->increase_interval = GSTE_BITRATE_UP_INTERVAL;
+
+    if (encoder->bit_rate_step == 0) {
+        encoder->bit_rate_step = MAX(GSTE_MIN_BITRATE,
+                                     MIN(GSTE_BITRATE_MAX_STEP,
+                                         (encoder->max_bit_rate - encoder->min_bit_rate) / 10));
+        encoder->status = (bit_rate < encoder->bit_rate) ? GSTE_BITRATE_DECREASING : GSTE_BITRATE_INCREASING;
+        if (encoder->max_bit_rate / GSTE_BITRATE_MARGIN < encoder->min_bit_rate) {
+            /* We have sufficiently narrowed down the optimal bit rate range.
+             * Settle on the lower end to keep a safety margin and stop rocking
+             * the boat.
+             */
+            bit_rate = encoder->min_bit_rate;
+            encoder->status = GSTE_BITRATE_STABLE;
+            encoder->increase_interval = encoder->has_client_reports ? GSTE_BITRATE_UP_CLIENT_STABLE : GSTE_BITRATE_UP_SERVER_STABLE;
+            set_video_bit_rate(encoder, bit_rate);
+        }
+    }
+    spice_debug("%u set_bit_rate(%.3fMbps) eff %.3f %.3f-%.3f %d",
+                get_last_frame_mm_time(encoder) - encoder->last_change,
+                get_mbps(bit_rate), get_mbps(get_effective_bit_rate(encoder)),
+                get_mbps(encoder->min_bit_rate),
+                get_mbps(encoder->max_bit_rate), encoder->status);
+
+    encoder->last_change = get_last_frame_mm_time(encoder);
+    encoder->bit_rate = bit_rate;
+    /* Adjust the vbuffer size without ever increasing vbuffer_free to avoid
+     * sudden bit rate increases.
+     */
+    int32_t new_size = bit_rate * GSTE_VBUFFER_SIZE / MILLI_SECOND / 8;
+    if (new_size < encoder->vbuffer_size && encoder->vbuffer_free > 0) {
+        encoder->vbuffer_free = MAX(0, encoder->vbuffer_free + new_size - encoder->vbuffer_size);
+    }
+    encoder->vbuffer_size = new_size;
+    update_next_frame(encoder);
+
+    /* Frames preceeding the bit rate change are not relevant to the current
+     * situation anymore.
+     */
+    encoder->stat_first = encoder->history_last;
+    encoder->stat_sum = encoder->stat_maximum = encoder->history[encoder->history_last].size;
+
+    if (bit_rate > encoder->video_bit_rate) {
+        set_video_bit_rate(encoder, bit_rate * GSTE_BITRATE_MARGIN);
+    }
+}
+
+static void increase_bit_rate(SpiceGstEncoder *encoder)
+{
+    if (get_effective_bit_rate(encoder) < encoder->bit_rate) {
+        /* The GStreamer encoder currently uses less bandwidth than allowed.
+         * So increasing the limit again makes no sense.
+         */
+        return;
+    }
+
+    if (encoder->bit_rate == encoder->max_bit_rate &&
+        get_last_frame_mm_time(encoder) - encoder->last_change > GSTE_BITRATE_UP_RESET_MAX) {
+        /* The maximum bit rate seems to be sustainable so it was probably set
+         * too low. Probe for the maximum bit rate again.
+         */
+        encoder->max_bit_rate = get_bit_rate_cap(encoder);
+        encoder->status = GSTE_BITRATE_INCREASING;
+    }
+
+    uint64_t new_bit_rate = MIN(encoder->bit_rate + encoder->bit_rate_step,
+                                encoder->max_bit_rate);
+    spice_debug("increase bit rate to %.3fMbps %.3f-%.3fMbps %d",
+                get_mbps(new_bit_rate), get_mbps(encoder->min_bit_rate),
+                get_mbps(encoder->max_bit_rate), encoder->status);
+    set_bit_rate(encoder, new_bit_rate);
+}
+
+
+/* ---------- Server feedback ---------- */
+
+/* A helper for gst_encoder_encode_frame().
+ *
+ * Checks how many frames got dropped since the last encoded frame and adjusts
+ * the bit rate accordingly.
+ */
+static inline gboolean handle_server_drops(SpiceGstEncoder *encoder,
+                                           uint32_t frame_mm_time)
+{
+    if (encoder->server_drops == 0) {
+        return FALSE;
+    }
+
+    spice_debug("server report: got %u drops in %ums after %ums",
+                encoder->server_drops,
+                frame_mm_time - get_last_frame_mm_time(encoder),
+                frame_mm_time - encoder->last_change);
+
+    /* The server dropped a frame so clearly the buffer is full. */
+    encoder->vbuffer_free = MIN(encoder->vbuffer_free, 0);
+    /* Add a 0 byte frame so the time spent dropping frames is not counted as
+     * time during which the buffer was refilling. This implies dropping this
+     * frame.
+     */
+    add_frame(encoder, frame_mm_time, 0);
+
+    if (encoder->server_drops >= get_source_fps(encoder)) {
+        spice_debug("cut the bit rate");
+        uint64_t bit_rate = (encoder->bit_rate == encoder->min_bit_rate) ?
+            encoder->bit_rate / GSTE_BITRATE_CUT :
+            MAX(encoder->min_bit_rate, encoder->bit_rate / GSTE_BITRATE_CUT);
+        set_bit_rate(encoder, bit_rate);
+
+    } else {
+        spice_debug("reduce the bit rate");
+        uint64_t bit_rate = (encoder->bit_rate == encoder->min_bit_rate) ?
+            encoder->bit_rate / GSTE_BITRATE_REDUCE :
+            MAX(encoder->min_bit_rate, encoder->bit_rate / GSTE_BITRATE_REDUCE);
+        set_bit_rate(encoder, bit_rate);
+    }
+    encoder->server_drops = 0;
+    return TRUE;
+}
+
+/* A helper for gst_encoder_encode_frame(). */
+static inline void server_increase_bit_rate(SpiceGstEncoder *encoder,
+                                            uint32_t frame_mm_time)
+{
+    /* Let gst_encoder_client_stream_report() deal with bit rate increases if
+     * we receive client reports.
+     */
+    if (!encoder->has_client_reports && encoder->server_drops == 0 &&
+        frame_mm_time - encoder->last_change >= encoder->increase_interval) {
+        increase_bit_rate(encoder);
+    }
 }
 
 
@@ -507,11 +762,10 @@ static gboolean construct_pipeline(SpiceGstEncoder *encoder,
     encoder->appsink = GST_APP_SINK(gst_bin_get_by_name(GST_BIN(encoder->pipeline), "sink"));
 
     /* Configure the encoder bitrate, frame latency, etc. */
-    adjust_bit_rate(encoder);
     switch (encoder->base.codec_type) {
     case SPICE_VIDEO_CODEC_TYPE_MJPEG:
         g_object_set(G_OBJECT(encoder->gstenc),
-                     "bitrate", encoder->bit_rate,
+                     "bitrate", encoder->video_bit_rate,
                      "max-threads", 1, /* zero-frame latency */
                      NULL);
         break;
@@ -524,7 +778,7 @@ static gboolean construct_pipeline(SpiceGstEncoder *encoder,
 #endif
         g_object_set(G_OBJECT(encoder->gstenc),
                      "resize-allowed", TRUE, /* for very low bit rates */
-                     "target-bitrate", encoder->bit_rate,
+                     "target-bitrate", encoder->video_bit_rate,
                      "end-usage", 1, /* CBR */
                      "lag-in-frames", 0, /* zero-frame latency */
                      "error-resilient", 1, /* for client frame drops */
@@ -535,7 +789,7 @@ static gboolean construct_pipeline(SpiceGstEncoder *encoder,
         }
     case SPICE_VIDEO_CODEC_TYPE_H264:
         g_object_set(G_OBJECT(encoder->gstenc),
-                     "bitrate", encoder->bit_rate / 1024,
+                     "bitrate", encoder->video_bit_rate / 1024,
                      "byte-stream", TRUE,
                      "aud", FALSE,
                      "tune", 4, /* zero-frame latency */
@@ -857,8 +1111,10 @@ static int gst_encoder_encode_frame(VideoEncoder *video_encoder,
         encoder->height = height;
         if (encoder->bit_rate == 0) {
             encoder->history[0].mm_time = frame_mm_time;
-            encoder->bit_rate = encoder->starting_bit_rate;
-            adjust_bit_rate(encoder);
+            encoder->max_bit_rate = get_bit_rate_cap(encoder);
+            encoder->min_bit_rate = GSTE_MIN_BITRATE;
+            encoder->status = GSTE_BITRATE_DECREASING;
+            set_bit_rate(encoder, encoder->starting_bit_rate);
             encoder->vbuffer_free = 0; /* Slow start */
         } else if (encoder->pipeline) {
             reconfigure_pipeline(encoder);
@@ -866,7 +1122,8 @@ static int gst_encoder_encode_frame(VideoEncoder *video_encoder,
     }
 
     if (rate_control_is_active(encoder) &&
-        frame_mm_time < encoder->next_frame) {
+        (handle_server_drops(encoder, frame_mm_time) ||
+         frame_mm_time < encoder->next_frame)) {
         /* Drop the frame to limit the outgoing bit rate. */
         return VIDEO_ENCODER_FRAME_DROP;
     }
@@ -886,8 +1143,14 @@ static int gst_encoder_encode_frame(VideoEncoder *video_encoder,
     if (rc != VIDEO_ENCODER_FRAME_ENCODE_DONE) {
         return rc;
     }
+    uint32_t elapsed = frame_mm_time - get_last_frame_mm_time(encoder);
     add_frame(encoder, frame_mm_time, (*video_buffer)->size);
 
+    int32_t refill = encoder->bit_rate * elapsed / MILLI_SECOND / 8;
+    encoder->vbuffer_free = MIN(encoder->vbuffer_free + refill,
+                                encoder->vbuffer_size) - (*video_buffer)->size;
+
+    server_increase_bit_rate(encoder, frame_mm_time);
     update_next_frame(encoder);
 
     return rc;
@@ -898,21 +1161,115 @@ static void gst_encoder_client_stream_report(VideoEncoder *video_encoder,
                                              uint32_t num_drops,
                                              uint32_t start_frame_mm_time,
                                              uint32_t end_frame_mm_time,
-                                             int32_t end_frame_delay,
-                                             uint32_t audio_delay)
+                                             int32_t video_margin,
+                                             uint32_t audio_margin)
 {
     SpiceGstEncoder *encoder = (SpiceGstEncoder*)video_encoder;
+    encoder->has_client_reports = TRUE;
+
+    encoder->max_video_margin = MAX(encoder->max_video_margin, video_margin);
+    encoder->max_audio_margin = MAX(encoder->max_audio_margin, audio_margin);
+    int32_t margin_delta = video_margin - encoder->last_video_margin;
+    encoder->last_video_margin = video_margin;
+
     uint64_t period_bit_rate = get_period_bit_rate(encoder, start_frame_mm_time, end_frame_mm_time);
-    spice_debug("client report: %u/%u drops in %ums margins video %3d audio %3u bw %.3f/%.3fMbps",
+    spice_debug("client report: %u/%u drops in %ums margins video %3d/%3d audio %3u/%3u bw %.3f/%.3fMbps%s",
                 num_drops, num_frames, end_frame_mm_time - start_frame_mm_time,
-                end_frame_delay, audio_delay,
+                video_margin, encoder->max_video_margin,
+                audio_margin, encoder->max_audio_margin,
                 get_mbps(period_bit_rate),
-                get_mbps(get_effective_bit_rate(encoder)));
+                get_mbps(get_effective_bit_rate(encoder)),
+                start_frame_mm_time < encoder->last_change ? " obsolete" : "");
+    if (encoder->status == GSTE_BITRATE_DECREASING &&
+        start_frame_mm_time < encoder->last_change) {
+        /* Some of this data predates the last bit rate reduction
+         * so it is obsolete.
+         */
+        return;
+    }
+
+    /* We normally arrange for even the largest frames to arrive a bit over one
+     * period before they should be displayed.
+     */
+    uint32_t min_margin = MILLI_SECOND / get_source_fps(encoder) +
+        get_network_latency(encoder) * GSTE_LATENCY_MARGIN;
+
+    /* A low video margin indicates that the bit rate is too high. */
+    uint32_t score;
+    if (num_drops) {
+        score = 4;
+    } else if (margin_delta >= 0) {
+        /* The situation was bad but seems to be improving */
+        score = 0;
+    } else if (video_margin < min_margin * GSTE_VIDEO_MARGIN_BAD ||
+               video_margin < encoder->max_video_margin * GSTE_VIDEO_MARGIN_BAD) {
+        score = 3;
+    } else if (video_margin < min_margin ||
+               video_margin < encoder->max_video_margin * GSTE_VIDEO_MARGIN_AVERAGE) {
+        score = 2;
+    } else if (video_margin < encoder->max_video_margin * GSTE_VIDEO_MARGIN_GOOD) {
+        score = 1;
+    } else {
+        score = 0;
+    }
+    /* A fast dropping video margin is a compounding factor. */
+    if (margin_delta < -abs(encoder->max_video_margin) * GSTE_VIDEO_DELTA_BAD) {
+        score += 2;
+    } else if (margin_delta < -abs(encoder->max_video_margin) * GSTE_VIDEO_DELTA_AVERAGE) {
+        score += 1;
+    }
+
+    if (score > 3) {
+        spice_debug("score %u, cut the bit rate", score);
+        uint64_t bit_rate = (encoder->bit_rate == encoder->min_bit_rate) ?
+            encoder->bit_rate / GSTE_BITRATE_CUT :
+            MAX(encoder->min_bit_rate, encoder->bit_rate / GSTE_BITRATE_CUT);
+        set_bit_rate(encoder, bit_rate);
+
+    } else if (score == 3) {
+        spice_debug("score %u, reduce the bit rate", score);
+        uint64_t bit_rate = (encoder->bit_rate == encoder->min_bit_rate) ?
+            encoder->bit_rate / GSTE_BITRATE_REDUCE :
+            MAX(encoder->min_bit_rate, encoder->bit_rate / GSTE_BITRATE_REDUCE);
+        set_bit_rate(encoder, bit_rate);
+
+    } else if (score == 2) {
+        spice_debug("score %u, decrement the bit rate", score);
+        set_bit_rate(encoder, encoder->bit_rate - encoder->bit_rate_step);
+
+    } else if (audio_margin < encoder->max_audio_margin * GSTE_AUDIO_MARGIN_BAD &&
+               audio_margin * GSTE_AUDIO_VIDEO_RATIO < video_margin) {
+        /* The audio margin has decreased a lot while the video_margin
+         * remained higher. It may be that the video stream is starving the
+         * audio one of bandwidth. So reduce the bit rate.
+         */
+        spice_debug("free some bandwidth for the audio stream");
+        set_bit_rate(encoder, encoder->bit_rate - encoder->bit_rate_step);
+
+    } else if (score == 1 && period_bit_rate <= encoder->bit_rate &&
+               encoder->status == GSTE_BITRATE_INCREASING) {
+        /* We only increase the bit rate when score == 0 so things got worse
+         * since the last increase, and not because of a transient bit rate
+         * peak.
+         */
+        spice_debug("degraded margin, decrement bit rate %.3f <= %.3fMbps",
+                    get_mbps(period_bit_rate), get_mbps(encoder->bit_rate));
+        set_bit_rate(encoder, encoder->bit_rate - encoder->bit_rate_step);
+
+    } else if (score == 0 &&
+               get_last_frame_mm_time(encoder) - encoder->last_change >= encoder->increase_interval) {
+        /* The video margin is consistently high so increase the bit rate. */
+        increase_bit_rate(encoder);
+    }
 }
 
 static void gst_encoder_notify_server_frame_drop(VideoEncoder *video_encoder)
 {
-    spice_debug("server report: getting frame drops...");
+    SpiceGstEncoder *encoder = (SpiceGstEncoder*)video_encoder;
+    if (encoder->server_drops == 0) {
+        spice_debug("server report: getting frame drops...");
+    }
+    encoder->server_drops++;
 }
 
 static uint64_t gst_encoder_get_bit_rate(VideoEncoder *video_encoder)
