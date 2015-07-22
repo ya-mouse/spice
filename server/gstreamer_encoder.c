@@ -76,6 +76,9 @@ typedef struct SpiceGstEncoder {
     SpiceFormatForGStreamer *format;
     SpiceBitmapFmt spice_format;
 
+    /* Number of consecutive frame encoding errors. */
+    uint32_t errors;
+
     /* ---------- GStreamer pipeline ---------- */
 
     /* Pointers to the GStreamer pipeline elements. If pipeline is NULL the
@@ -721,25 +724,28 @@ static void set_appsrc_caps(SpiceGstEncoder *encoder)
     g_object_set(G_OBJECT(encoder->appsrc), "caps", encoder->src_caps, NULL);
 }
 
-/* A helper for gst_encoder_encode_frame(). */
-static gboolean construct_pipeline(SpiceGstEncoder *encoder,
-                                   const SpiceBitmap *bitmap)
+static const gchar* get_gst_codec_name(SpiceGstEncoder *encoder)
 {
-    const gchar* gstenc_name;
     switch (encoder->base.codec_type)
     {
     case SPICE_VIDEO_CODEC_TYPE_MJPEG:
-        gstenc_name = "avenc_mjpeg";
-        break;
+        return "avenc_mjpeg";
     case SPICE_VIDEO_CODEC_TYPE_VP8:
-        gstenc_name = "vp8enc";
-        break;
+        return "vp8enc";
     case SPICE_VIDEO_CODEC_TYPE_H264:
-        gstenc_name = "x264enc";
-        break;
+        return "x264enc";
     default:
         /* gstreamer_encoder_new() should have rejected this codec type */
         spice_warning("unsupported codec type %d", encoder->base.codec_type);
+        return NULL;
+    }
+}
+
+/* A helper for gst_encoder_encode_frame(). */
+static gboolean construct_pipeline(SpiceGstEncoder *encoder, const SpiceBitmap *bitmap)
+{
+    const gchar* gstenc_name = get_gst_codec_name(encoder);
+    if (!gstenc_name) {
         return FALSE;
     }
 
@@ -1104,6 +1110,7 @@ static int gst_encoder_encode_frame(VideoEncoder *video_encoder,
         encoder->format = map_format(bitmap->format);
         if (!encoder->format) {
             spice_debug("unable to map format type %d", bitmap->format);
+            encoder->errors = 4;
             return VIDEO_ENCODER_FRAME_UNSUPPORTED;
         }
         encoder->spice_format = bitmap->format;
@@ -1119,6 +1126,19 @@ static int gst_encoder_encode_frame(VideoEncoder *video_encoder,
         } else if (encoder->pipeline) {
             reconfigure_pipeline(encoder);
         }
+        encoder->errors = 0;
+    } else if (encoder->errors >= 3) {
+        /* The pipeline keeps failing to handle the frames we send it, which is
+         * usually because they are too small (mouse pointer-sized).
+         * So give up until something changes.
+         */
+        if (encoder->errors == 3) {
+            spice_debug("%s cannot compress %dx%d:%dbpp frames",
+                        get_gst_codec_name(encoder), encoder->width,
+                        encoder->height, encoder->format->bpp);
+            encoder->errors++;
+        }
+        return VIDEO_ENCODER_FRAME_UNSUPPORTED;
     }
 
     if (rate_control_is_active(encoder) &&
@@ -1129,6 +1149,7 @@ static int gst_encoder_encode_frame(VideoEncoder *video_encoder,
     }
 
     if (!encoder->pipeline && !construct_pipeline(encoder, bitmap)) {
+        encoder->errors++;
         return VIDEO_ENCODER_FRAME_UNSUPPORTED;
     }
 
@@ -1136,6 +1157,13 @@ static int gst_encoder_encode_frame(VideoEncoder *video_encoder,
     if (rc == VIDEO_ENCODER_FRAME_ENCODE_DONE) {
         rc = pull_compressed_buffer(encoder, video_buffer);
 #ifdef DO_ZERO_COPY
+        if (rc != VIDEO_ENCODER_FRAME_ENCODE_DONE) {
+            /* The input buffer will be stuck in the pipeline, preventing later
+             * ones from being processed. So reset the pipeline.
+             */
+            reset_pipeline(encoder);
+            encoder->errors++;
+        }
         /* GStreamer should have released the source frame buffer by now */
         spice_assert(!encoder->needs_bitmap);
 #endif
