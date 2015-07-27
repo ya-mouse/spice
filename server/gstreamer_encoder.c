@@ -784,6 +784,7 @@ static gboolean construct_pipeline(SpiceGstEncoder *encoder, const SpiceBitmap *
 #endif
         g_object_set(G_OBJECT(encoder->gstenc),
                      "resize-allowed", TRUE, /* for very low bit rates */
+                     "min-quantizer", 10, /* seems virtually lossless */
                      "target-bitrate", encoder->video_bit_rate,
                      "end-usage", 1, /* CBR */
                      "lag-in-frames", 0, /* zero-frame latency */
@@ -796,6 +797,7 @@ static gboolean construct_pipeline(SpiceGstEncoder *encoder, const SpiceBitmap *
     case SPICE_VIDEO_CODEC_TYPE_H264:
         g_object_set(G_OBJECT(encoder->gstenc),
                      "bitrate", encoder->video_bit_rate / 1024,
+                     "qp-min", 15, /* virtually lossless */
                      "byte-stream", TRUE,
                      "aud", FALSE,
                      "tune", 4, /* zero-frame latency */
