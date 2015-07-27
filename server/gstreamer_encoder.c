@@ -20,6 +20,8 @@
 #include <config.h>
 #endif
 
+#include <inttypes.h>
+
 #include <gst/gst.h>
 #include <gst/app/gstappsrc.h>
 #include <gst/app/gstappsink.h>
@@ -741,6 +743,65 @@ static const gchar* get_gst_codec_name(SpiceGstEncoder *encoder)
     }
 }
 
+/* A helper for construct_pipeline(). */
+static void set_gstenc_bitrate(SpiceGstEncoder *encoder)
+{
+    GObjectClass *class = G_OBJECT_GET_CLASS(encoder->gstenc);
+    GParamSpec *param = g_object_class_find_property(class, "bitrate");
+    if (param == NULL) {
+        param = g_object_class_find_property(class, "target-bitrate");
+    }
+    if (param) {
+        uint64_t gst_bit_rate = encoder->video_bit_rate;
+        if (strstr(g_param_spec_get_blurb(param), "kbit")) {
+            gst_bit_rate = gst_bit_rate / 1024;
+        }
+        switch (param->value_type) {
+        case G_TYPE_ULONG: {
+            GParamSpecULong *range = G_PARAM_SPEC_ULONG(param);
+            gst_bit_rate = MAX(range->minimum, MIN(range->maximum, gst_bit_rate));
+            break;
+        }
+        case G_TYPE_LONG: {
+            GParamSpecLong *range = G_PARAM_SPEC_LONG(param);
+            gst_bit_rate = MAX(range->minimum, MIN(range->maximum, gst_bit_rate));
+            break;
+        }
+        case G_TYPE_UINT: {
+            GParamSpecUInt *range = G_PARAM_SPEC_UINT(param);
+            gst_bit_rate = MAX(range->minimum, MIN(range->maximum, gst_bit_rate));
+            break;
+        }
+        case G_TYPE_INT: {
+            GParamSpecInt *range = G_PARAM_SPEC_INT(param);
+            gst_bit_rate = MAX(range->minimum, MIN(range->maximum, gst_bit_rate));
+            break;
+        }
+        case G_TYPE_UINT64: {
+            GParamSpecUInt64 *range = G_PARAM_SPEC_UINT64(param);
+            gst_bit_rate = MAX(range->minimum, MIN(range->maximum, gst_bit_rate));
+            break;
+        }
+        case G_TYPE_INT64: {
+            GParamSpecInt64 *range = G_PARAM_SPEC_INT64(param);
+            gst_bit_rate = MAX(range->minimum, MIN(range->maximum, gst_bit_rate));
+            break;
+        }
+        default:
+            spice_debug("the %s property has an unsupported type %"PRIu64,
+                        g_param_spec_get_name(param), param->value_type);
+        }
+        spice_debug("setting the GStreamer %s to %"PRIu64,
+                    g_param_spec_get_name(param), gst_bit_rate);
+        g_object_set(G_OBJECT(encoder->gstenc),
+                     g_param_spec_get_name(param), gst_bit_rate,
+                     NULL);
+    } else {
+        spice_printerr("Could not find the bit rate property for %s",
+                       get_gst_codec_name(encoder));
+    }
+}
+
 /* A helper for gst_encoder_encode_frame(). */
 static gboolean construct_pipeline(SpiceGstEncoder *encoder, const SpiceBitmap *bitmap)
 {
@@ -768,10 +829,10 @@ static gboolean construct_pipeline(SpiceGstEncoder *encoder, const SpiceBitmap *
     encoder->appsink = GST_APP_SINK(gst_bin_get_by_name(GST_BIN(encoder->pipeline), "sink"));
 
     /* Configure the encoder bitrate, frame latency, etc. */
+    set_gstenc_bitrate(encoder);
     switch (encoder->base.codec_type) {
     case SPICE_VIDEO_CODEC_TYPE_MJPEG:
         g_object_set(G_OBJECT(encoder->gstenc),
-                     "bitrate", encoder->video_bit_rate,
                      "max-threads", 1, /* zero-frame latency */
                      NULL);
         break;
@@ -785,7 +846,6 @@ static gboolean construct_pipeline(SpiceGstEncoder *encoder, const SpiceBitmap *
         g_object_set(G_OBJECT(encoder->gstenc),
                      "resize-allowed", TRUE, /* for very low bit rates */
                      "min-quantizer", 10, /* seems virtually lossless */
-                     "target-bitrate", encoder->video_bit_rate,
                      "end-usage", 1, /* CBR */
                      "lag-in-frames", 0, /* zero-frame latency */
                      "error-resilient", 1, /* for client frame drops */
@@ -796,7 +856,6 @@ static gboolean construct_pipeline(SpiceGstEncoder *encoder, const SpiceBitmap *
         }
     case SPICE_VIDEO_CODEC_TYPE_H264:
         g_object_set(G_OBJECT(encoder->gstenc),
-                     "bitrate", encoder->video_bit_rate / 1024,
                      "qp-min", 15, /* virtually lossless */
                      "byte-stream", TRUE,
                      "aud", FALSE,
