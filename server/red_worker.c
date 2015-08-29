@@ -121,7 +121,7 @@
 #define RED_STREAM_CHANNEL_CAPACITY 0.8
 /* the client's stream report frequency is the minimum of the 2 values below */
 #define RED_STREAM_CLIENT_REPORT_WINDOW 5 // #frames
-#define RED_STREAM_CLIENT_REPORT_TIMEOUT 1000 // milliseconds
+#define RED_STREAM_CLIENT_REPORT_TIMEOUT (MILLI_SECOND)
 #define RED_STREAM_DEFAULT_HIGH_START_BIT_RATE (10 * 1024 * 1024) // 10Mbps
 #define RED_STREAM_DEFAULT_LOW_START_BIT_RATE (2.5 * 1024 * 1024) // 2.5Mbps
 
@@ -2459,7 +2459,7 @@ static void red_print_stream_stats(DisplayChannelClient *dcc, StreamAgent *agent
 {
 #ifdef STREAM_STATS
     StreamStats *stats = &agent->stats;
-    double passed_mm_time = (stats->end - stats->start) / 1000.0;
+    double passed_mm_time = (double)(stats->end - stats->start) / MILLI_SECOND;
     VideoEncoderStats encoder_stats = {0};
 
     if (agent->video_encoder) {

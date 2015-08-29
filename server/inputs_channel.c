@@ -35,6 +35,7 @@
 
 #include "demarshallers.h"
 #include "spice.h"
+#include "spice_time.h"
 #include "red_common.h"
 #include "reds.h"
 #include "reds_stream.h"
@@ -111,7 +112,7 @@ static SpiceTimer *key_modifiers_timer;
 
 static InputsChannel *g_inputs_channel = NULL;
 
-#define KEY_MODIFIERS_TTL (1000 * 2) /*2sec*/
+#define KEY_MODIFIERS_TTL (2 * MILLI_SECOND)
 
 #define SCROLL_LOCK_SCAN_CODE 0x46
 #define NUM_LOCK_SCAN_CODE 0x45

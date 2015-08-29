@@ -673,11 +673,11 @@ static void mjpeg_encoder_adjust_fps(MJpegEncoder *encoder, uint64_t now)
 
     if (!rate_control->during_quality_eval &&
         adjusted_fps_time_passed > MJPEG_ADJUST_FPS_TIMEOUT &&
-        adjusted_fps_time_passed > 1000 / rate_control->adjusted_fps) {
+        adjusted_fps_time_passed > MILLI_SECOND / rate_control->adjusted_fps) {
         double avg_fps;
         double fps_ratio;
 
-        avg_fps = ((double)rate_control->adjusted_fps_num_frames*1000) /
+        avg_fps = ((double)rate_control->adjusted_fps_num_frames * MILLI_SECOND) /
                   adjusted_fps_time_passed;
         spice_debug("#frames-adjust=%"PRIu64" #adjust-time=%"PRIu64" avg-fps=%.2f",
                     rate_control->adjusted_fps_num_frames, adjusted_fps_time_passed, avg_fps);
@@ -1174,7 +1174,7 @@ static uint32_t get_min_required_playback_delay(uint64_t frame_enc_size,
     if (!frame_enc_size || !byte_rate) {
         return latency;
     }
-    one_frame_time = (frame_enc_size*1000)/byte_rate;
+    one_frame_time = (frame_enc_size * MILLI_SECOND) / byte_rate;
 
     min_delay = MIN(one_frame_time*2 + latency, MJPEG_MAX_CLIENT_PLAYBACK_DELAY);
     return min_delay;
