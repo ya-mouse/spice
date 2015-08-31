@@ -8258,7 +8258,6 @@ static inline int red_marshall_stream_data(RedChannelClient *rcc,
     RedWorker *worker = dcc->common.worker;
     uint32_t frame_mm_time;
     VideoBuffer *outbuf;
-    int width, height;
     int ret;
 
     if (!stream) {
@@ -8274,21 +8273,13 @@ static inline int red_marshall_stream_data(RedChannelClient *rcc,
         return FALSE;
     }
 
-    if (drawable->sized_stream) {
-        if (red_channel_client_test_remote_cap(rcc, SPICE_DISPLAY_CAP_SIZED_STREAM)) {
-            SpiceRect *src_rect = &drawable->red_drawable->u.copy.src_area;
-
-            width = src_rect->right - src_rect->left;
-            height = src_rect->bottom - src_rect->top;
-        } else {
-            return FALSE;
-        }
-    } else {
-        width = stream->width;
-        height = stream->height;
+    if (drawable->sized_stream &&
+        !red_channel_client_test_remote_cap(rcc, SPICE_DISPLAY_CAP_SIZED_STREAM)) {
+        return FALSE;
     }
 
     StreamAgent *agent = &dcc->stream_agents[get_stream_id(worker, stream)];
+    SpiceRect *src_area = &drawable->red_drawable->u.copy.src_area;
 
     /* workaround for vga streams */
     frame_mm_time =  drawable->red_drawable->mm_time ?
@@ -8296,8 +8287,7 @@ static inline int red_marshall_stream_data(RedChannelClient *rcc,
                         milli_now();
 
     ret = agent->video_encoder->encode_frame(agent->video_encoder,
-                                             &image->u.bitmap, width, height,
-                                             &drawable->red_drawable->u.copy.src_area,
+                                             &image->u.bitmap, src_area,
                                              stream->top_down, frame_mm_time,
                                              &outbuf);
 
@@ -8334,8 +8324,8 @@ static inline int red_marshall_stream_data(RedChannelClient *rcc,
         stream_data.base.id = get_stream_id(worker, stream);
         stream_data.base.multi_media_time = frame_mm_time;
         stream_data.data_size = outbuf->size;
-        stream_data.width = width;
-        stream_data.height = height;
+        stream_data.width = src_area->right - src_area->left;
+        stream_data.height = src_area->bottom - src_area->top;
         stream_data.dest = drawable->red_drawable->bbox;
 
         spice_debug("stream %d: sized frame: dest ==> ", stream_data.base.id);

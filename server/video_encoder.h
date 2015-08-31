@@ -62,8 +62,6 @@ struct VideoEncoder {
      *
      * @encoder:   The video encoder.
      * @bitmap:    The Spice screen.
-     * @width:     The width of the video area. This always matches src.
-     * @height:    The height of the video area. This always matches src.
      * @src:       A rectangle specifying the area occupied by the video.
      * @top_down:  If true the first video line is specified by src.top.
      * @buffer:    A pointer to a VideoBuffer structure containing the
@@ -76,9 +74,8 @@ struct VideoEncoder {
      *                              only happen if rate control is active.
      */
     int (*encode_frame)(VideoEncoder *encoder, const SpiceBitmap *bitmap,
-                        int width, int height, const SpiceRect *src,
-                        int top_down, uint32_t frame_mm_time,
-                        VideoBuffer** buffer);
+                        const SpiceRect *src, int top_down,
+                        uint32_t frame_mm_time, VideoBuffer** buffer);
 
     /*
      * Bit rate control methods.

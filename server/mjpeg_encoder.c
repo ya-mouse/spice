@@ -921,7 +921,6 @@ static int encode_frame(MJpegEncoder *encoder, const SpiceRect *src,
 
 static int mjpeg_encoder_encode_frame(VideoEncoder *video_encoder,
                                       const SpiceBitmap *bitmap,
-                                      int width, int height,
                                       const SpiceRect *src,
                                       int top_down, uint32_t frame_mm_time,
                                       VideoBuffer **video_buffer)
@@ -929,7 +928,9 @@ static int mjpeg_encoder_encode_frame(VideoEncoder *video_encoder,
     MJpegEncoder *encoder = (MJpegEncoder*)video_encoder;
     MJpegVideoBuffer *buffer = create_mjpeg_video_buffer();
 
-    int ret = mjpeg_encoder_start_frame(encoder, bitmap->format, width, height,
+    int ret = mjpeg_encoder_start_frame(encoder, bitmap->format,
+                                        src->right - src->left,
+                                        src->bottom - src->top,
                                         buffer, frame_mm_time);
     if (ret == VIDEO_ENCODER_FRAME_ENCODE_DONE) {
         if (encode_frame(encoder, src, bitmap, top_down)) {

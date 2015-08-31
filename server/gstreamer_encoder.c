@@ -1216,12 +1216,14 @@ static void gst_encoder_destroy(VideoEncoder *video_encoder)
 
 static int gst_encoder_encode_frame(VideoEncoder *video_encoder,
                                     const SpiceBitmap *bitmap,
-                                    int width, int height,
                                     const SpiceRect *src, int top_down,
                                     uint32_t frame_mm_time,
                                     VideoBuffer **video_buffer)
 {
     SpiceGstEncoder *encoder = (SpiceGstEncoder*)video_encoder;
+    uint32_t width = src->right - src->left;
+    uint32_t height = src->bottom - src->top;
+
     if (width != encoder->width || height != encoder->height ||
         encoder->spice_format != bitmap->format) {
         spice_debug("video format change: width %d -> %d, height %d -> %d, format %d -> %d",
