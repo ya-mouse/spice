@@ -167,6 +167,8 @@ typedef struct MJpegEncoder {
     uint32_t row_size;
     int first_frame;
 
+    MJpegVideoBuffer* default_buffer;
+
     struct jpeg_compress_struct cinfo;
     struct jpeg_error_mgr jerr;
 
@@ -218,6 +220,7 @@ static void mjpeg_encoder_destroy(VideoEncoder *video_encoder)
 {
     MJpegEncoder *encoder = (MJpegEncoder*)video_encoder;
     jpeg_destroy_compress(&encoder->cinfo);
+    encoder->default_buffer->base.unref((VideoBuffer*)encoder->default_buffer);
     free(encoder->row);
     free(encoder);
 }
@@ -937,7 +940,16 @@ static int mjpeg_encoder_encode_frame(VideoEncoder *video_encoder,
                                       VideoBuffer **video_buffer)
 {
     MJpegEncoder *encoder = (MJpegEncoder*)video_encoder;
-    MJpegVideoBuffer *buffer = create_mjpeg_video_buffer();
+    MJpegVideoBuffer *buffer;
+    if (encoder->default_buffer->base.ref_count == 1) {
+        /* Only the MJpegEncoder is referencing the default buffer
+         * so we can reuse it.
+         */
+        buffer = encoder->default_buffer;
+        buffer->base.ref((VideoBuffer*)buffer);
+    } else {
+        buffer = create_mjpeg_video_buffer();
+    }
 
     int ret = mjpeg_encoder_start_frame(encoder, bitmap->format,
                                         src->right - src->left,
@@ -1360,6 +1372,7 @@ VideoEncoder *mjpeg_encoder_new(SpiceVideoCodecType codec_type,
     encoder->base.get_stats = &mjpeg_encoder_get_stats;
     encoder->base.codec_type = codec_type;
     encoder->first_frame = TRUE;
+    encoder->default_buffer = create_mjpeg_video_buffer();
     encoder->rate_control.byte_rate = starting_bit_rate / 8;
     encoder->starting_bit_rate = starting_bit_rate;
 
