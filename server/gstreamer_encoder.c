@@ -55,6 +55,7 @@ typedef struct SpiceGstVideoBuffer {
 #ifndef HAVE_GSTREAMER_0_10
     GstMapInfo map;
 #endif
+    gboolean persistent;
 } SpiceGstVideoBuffer;
 
 typedef struct {
@@ -102,6 +103,9 @@ typedef struct SpiceGstEncoder {
     /* Set to TRUE until GStreamer no longer needs the raw bitmap buffer. */
     gboolean needs_bitmap;
 #endif
+
+    /* The default video buffer */
+    SpiceGstVideoBuffer *default_buffer;
 
     /* The frame counter for GStreamer buffers */
     uint32_t frame;
@@ -283,16 +287,19 @@ static void gst_video_buffer_unref(VideoBuffer *video_buffer)
         gst_buffer_unmap(buffer->gst_buffer, &buffer->map);
 #endif
         gst_buffer_unref(buffer->gst_buffer);
-        free(buffer);
+        if (!buffer->persistent) {
+            free(buffer);
+        }
     }
 }
 
-static SpiceGstVideoBuffer* create_gst_video_buffer(void)
+static SpiceGstVideoBuffer* create_gst_video_buffer(gboolean persistent)
 {
     SpiceGstVideoBuffer *buffer = spice_new0(SpiceGstVideoBuffer, 1);
     buffer->base.ref = &gst_video_buffer_ref;
     buffer->base.unref = &gst_video_buffer_unref;
-    buffer->base.ref_count = 1;
+    buffer->persistent = persistent;
+    buffer->base.ref_count = persistent ? 0 : 1;
     return buffer;
 }
 
@@ -1183,8 +1190,15 @@ static int push_raw_frame(SpiceGstEncoder *encoder, const SpiceBitmap *bitmap,
 static int pull_compressed_buffer(SpiceGstEncoder *encoder,
                                   VideoBuffer **video_buffer)
 {
+    SpiceGstVideoBuffer *buffer;
+    if (encoder->default_buffer->base.ref_count == 0) {
+        /* The default buffer is unused so we can reuse it. */
+        buffer = encoder->default_buffer;
+        buffer->base.ref((VideoBuffer*)buffer);
+    } else {
+        buffer = create_gst_video_buffer(FALSE);
+    }
 #ifdef HAVE_GSTREAMER_0_10
-    SpiceGstVideoBuffer *buffer = create_gst_video_buffer();
     buffer->gst_buffer = gst_app_sink_pull_buffer(encoder->appsink);
     if (buffer->gst_buffer) {
         buffer->base.data = GST_BUFFER_DATA(buffer->gst_buffer);
@@ -1192,11 +1206,9 @@ static int pull_compressed_buffer(SpiceGstEncoder *encoder,
         *video_buffer = (VideoBuffer*)buffer;
         return VIDEO_ENCODER_FRAME_ENCODE_DONE;
     }
-    buffer->base.free((VideoBuffer*)buffer);
 #else
     GstSample *sample = gst_app_sink_pull_sample(encoder->appsink);
     if (sample) {
-        SpiceGstVideoBuffer *buffer = create_gst_video_buffer();
         buffer->gst_buffer = gst_sample_get_buffer(sample);
         if (buffer->gst_buffer &&
             gst_buffer_map(buffer->gst_buffer, &buffer->map, GST_MAP_READ)) {
@@ -1207,11 +1219,11 @@ static int pull_compressed_buffer(SpiceGstEncoder *encoder,
             gst_sample_unref(sample);
             return VIDEO_ENCODER_FRAME_ENCODE_DONE;
         }
-        buffer->base.unref((VideoBuffer*)buffer);
         gst_sample_unref(sample);
     }
 #endif
     spice_debug("failed to pull the compressed buffer");
+    buffer->base.unref((VideoBuffer*)buffer);
     return VIDEO_ENCODER_FRAME_UNSUPPORTED;
 }
 
@@ -1221,6 +1233,11 @@ static int pull_compressed_buffer(SpiceGstEncoder *encoder,
 static void gst_encoder_destroy(VideoEncoder *video_encoder)
 {
     SpiceGstEncoder *encoder = (SpiceGstEncoder*)video_encoder;
+    if (encoder->default_buffer->base.ref_count == 0) {
+        free(encoder->default_buffer);
+    } else {
+        encoder->default_buffer->persistent = FALSE;
+    }
     reset_pipeline(encoder);
     free(encoder);
 }
@@ -1486,6 +1503,7 @@ VideoEncoder *gstreamer_encoder_new(SpiceVideoCodecType codec_type,
     encoder->base.get_bit_rate = &gst_encoder_get_bit_rate;
     encoder->base.get_stats = &gst_encoder_get_stats;
     encoder->base.codec_type = codec_type;
+    encoder->default_buffer = create_gst_video_buffer(TRUE);
 
     encoder->cbs = *cbs;
     encoder->starting_bit_rate = starting_bit_rate;
