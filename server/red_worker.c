@@ -8245,7 +8245,7 @@ static inline void display_begin_send_message(RedChannelClient *rcc)
 static void red_release_video_encoder_buffer(uint8_t *data, void *opaque)
 {
     VideoBuffer *buffer = (VideoBuffer*)opaque;
-    buffer->free(buffer);
+    buffer->unref(buffer);
 }
 
 static inline int red_marshall_stream_data(RedChannelClient *rcc,

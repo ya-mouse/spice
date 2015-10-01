@@ -268,20 +268,31 @@ typedef struct SpiceGstEncoder {
 
 /* ---------- The SpiceGstVideoBuffer implementation ---------- */
 
-static void gst_video_buffer_free(VideoBuffer *video_buffer)
+static inline VideoBuffer* gst_video_buffer_ref(VideoBuffer *video_buffer)
 {
     SpiceGstVideoBuffer *buffer = (SpiceGstVideoBuffer*)video_buffer;
+    buffer->base.ref_count++;
+    return video_buffer;
+}
+
+static void gst_video_buffer_unref(VideoBuffer *video_buffer)
+{
+    SpiceGstVideoBuffer *buffer = (SpiceGstVideoBuffer*)video_buffer;
+    if (--buffer->base.ref_count == 0) {
 #ifndef HAVE_GSTREAMER_0_10
         gst_buffer_unmap(buffer->gst_buffer, &buffer->map);
 #endif
-    gst_buffer_unref(buffer->gst_buffer);
-    free(buffer);
+        gst_buffer_unref(buffer->gst_buffer);
+        free(buffer);
+    }
 }
 
 static SpiceGstVideoBuffer* create_gst_video_buffer(void)
 {
     SpiceGstVideoBuffer *buffer = spice_new0(SpiceGstVideoBuffer, 1);
-    buffer->base.free = &gst_video_buffer_free;
+    buffer->base.ref = &gst_video_buffer_ref;
+    buffer->base.unref = &gst_video_buffer_unref;
+    buffer->base.ref_count = 1;
     return buffer;
 }
 
@@ -1196,7 +1207,7 @@ static int pull_compressed_buffer(SpiceGstEncoder *encoder,
             gst_sample_unref(sample);
             return VIDEO_ENCODER_FRAME_ENCODE_DONE;
         }
-        buffer->base.free((VideoBuffer*)buffer);
+        buffer->base.unref((VideoBuffer*)buffer);
         gst_sample_unref(sample);
     }
 #endif

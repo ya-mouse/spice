@@ -187,19 +187,30 @@ static uint32_t get_min_required_playback_delay(uint64_t frame_enc_size,
                                                 uint64_t byte_rate,
                                                 uint32_t latency);
 
-static void mjpeg_buffer_free(VideoBuffer *video_buffer)
+static inline VideoBuffer* mjpeg_buffer_ref(VideoBuffer *video_buffer)
 {
     MJpegVideoBuffer *buffer = (MJpegVideoBuffer*)video_buffer;
-    free(buffer->base.data);
-    free(buffer);
+    buffer->base.ref_count++;
+    return video_buffer;
+}
+
+static void mjpeg_buffer_unref(VideoBuffer *video_buffer)
+{
+    MJpegVideoBuffer *buffer = (MJpegVideoBuffer*)video_buffer;
+    if (--buffer->base.ref_count == 0) {
+        free(buffer->base.data);
+        free(buffer);
+    }
 }
 
 static MJpegVideoBuffer* create_mjpeg_video_buffer(void)
 {
     MJpegVideoBuffer *buffer = spice_new0(MJpegVideoBuffer, 1);
-    buffer->base.free = &mjpeg_buffer_free;
+    buffer->base.ref = &mjpeg_buffer_ref;
+    buffer->base.unref = &mjpeg_buffer_unref;
     buffer->maxsize = MJPEG_INITIAL_BUFFER_SIZE;
     buffer->base.data = malloc(buffer->maxsize);
+    buffer->base.ref_count = 1;
     return buffer;
 }
 
@@ -942,7 +953,7 @@ static int mjpeg_encoder_encode_frame(VideoEncoder *video_encoder,
     }
 
     if (ret != VIDEO_ENCODER_FRAME_ENCODE_DONE) {
-        buffer->base.free((VideoBuffer*)buffer);
+        buffer->base.unref((VideoBuffer*)buffer);
     }
     return ret;
 }

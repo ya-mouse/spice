@@ -33,11 +33,22 @@ struct VideoBuffer {
     /* The size of the compressed frame in bytes. */
     uint32_t size;
 
-    /* Releases the video buffer resources and deallocates it.
+    /* The buffer's reference count. */
+    uint32_t ref_count;
+
+    /* Increments the video buffer's reference count and returns the new count.
+     *
+     * @buffer:   The video buffer.
+     * @return:   The new reference count.
+     */
+    VideoBuffer* (*ref)(VideoBuffer *buffer);
+
+    /* Decrements the video buffer's reference count and deallocates it as
+     * appropriate.
      *
      * @buffer:   The video buffer.
      */
-    void (*free)(VideoBuffer *buffer);
+    void (*unref)(VideoBuffer *buffer);
 };
 
 enum {
@@ -65,8 +76,8 @@ struct VideoEncoder {
      * @src:       A rectangle specifying the area occupied by the video.
      * @top_down:  If true the first video line is specified by src.top.
      * @buffer:    A pointer to a VideoBuffer structure containing the
-     *             compressed frame if successful. Call the buffer's free()
-     *             method as soon as it is no longer needed.
+     *             compressed frame if successful. This buffer should be
+     *             unref()-ed as soon as no longer needed.
      * @return:
      *     VIDEO_ENCODER_FRAME_ENCODE_DONE if successful.
      *     VIDEO_ENCODER_FRAME_UNSUPPORTED if the frame cannot be encoded.
