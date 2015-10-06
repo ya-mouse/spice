@@ -24,7 +24,7 @@
 enum {
     MJPEG_ENCODER_FRAME_UNSUPPORTED = -1,
     MJPEG_ENCODER_FRAME_DROP,
-    MJPEG_ENCODER_FRAME_ENCODE_START,
+    MJPEG_ENCODER_FRAME_ENCODE_DONE,
 };
 
 typedef struct MJpegEncoder MJpegEncoder;
@@ -53,24 +53,12 @@ MJpegEncoder *mjpeg_encoder_new(uint64_t starting_bit_rate,
                                 MJpegEncoderRateControlCbs *cbs, void *opaque);
 void mjpeg_encoder_destroy(MJpegEncoder *encoder);
 
-/*
- * dest must be either NULL or allocated by malloc, since it might be freed
- * during the encoding, if its size is too small.
- *
- * return:
- *  MJPEG_ENCODER_FRAME_UNSUPPORTED : frame cannot be encoded
- *  MJPEG_ENCODER_FRAME_DROP        : frame should be dropped. This value can only be returned
- *                                    if mjpeg rate control is active.
- *  MJPEG_ENCODER_FRAME_ENCODE_START: frame encoding started. Continue with
- *                                    mjpeg_encoder_encode_scanline.
- */
-int mjpeg_encoder_start_frame(MJpegEncoder *encoder, SpiceBitmapFmt format,
-                              int width, int height,
-                              uint8_t **dest, size_t *dest_len,
-                              uint32_t frame_mm_time);
-int mjpeg_encoder_encode_frame(MJpegEncoder *encoder, const SpiceRect *src,
-                               const SpiceBitmap *image, int top_down);
-size_t mjpeg_encoder_end_frame(MJpegEncoder *encoder);
+int mjpeg_encoder_encode_frame(MJpegEncoder *encoder,
+                               const SpiceBitmap *bitmap, int width, int height,
+                               const SpiceRect *src,
+                               int top_down, uint32_t frame_mm_time,
+                               uint8_t **outbuf, size_t *outbuf_size,
+                               int *data_size);
 
 /*
  * bit rate control
