@@ -191,7 +191,7 @@ void mjpeg_encoder_destroy(MJpegEncoder *encoder)
     free(encoder);
 }
 
-uint8_t mjpeg_encoder_get_bytes_per_pixel(MJpegEncoder *encoder)
+static uint8_t mjpeg_encoder_get_bytes_per_pixel(MJpegEncoder *encoder)
 {
     return encoder->bytes_per_pixel;
 }
@@ -692,7 +692,8 @@ static void mjpeg_encoder_adjust_fps(MJpegEncoder *encoder, uint64_t now)
     }
 }
 
-int mjpeg_encoder_start_frame(MJpegEncoder *encoder, SpiceBitmapFmt format,
+int mjpeg_encoder_start_frame(MJpegEncoder *encoder,
+                              SpiceBitmapFmt format,
                               int width, int height,
                               uint8_t **dest, size_t *dest_len,
                               uint32_t frame_mm_time)
@@ -793,8 +794,9 @@ int mjpeg_encoder_start_frame(MJpegEncoder *encoder, SpiceBitmapFmt format,
     return MJPEG_ENCODER_FRAME_ENCODE_START;
 }
 
-int mjpeg_encoder_encode_scanline(MJpegEncoder *encoder, uint8_t *src_pixels,
-                                  size_t image_width)
+static int mjpeg_encoder_encode_scanline(MJpegEncoder *encoder,
+                                         uint8_t *src_pixels,
+                                         size_t image_width)
 {
     unsigned int scanlines_written;
     uint8_t *row;
@@ -848,6 +850,69 @@ size_t mjpeg_encoder_end_frame(MJpegEncoder *encoder)
         rate_control->bit_rate_info.num_enc_frames++;
     }
     return encoder->rate_control.last_enc_size;
+}
+
+static inline uint8_t *get_image_line(SpiceChunks *chunks, size_t *offset,
+                                      int *chunk_nr, int stride)
+{
+    uint8_t *ret;
+    SpiceChunk *chunk;
+
+    chunk = &chunks->chunk[*chunk_nr];
+
+    if (*offset == chunk->len) {
+        if (*chunk_nr == chunks->num_chunks - 1) {
+            return NULL; /* Last chunk */
+        }
+        *offset = 0;
+        (*chunk_nr)++;
+        chunk = &chunks->chunk[*chunk_nr];
+    }
+
+    if (chunk->len - *offset < stride) {
+        spice_warning("bad chunk alignment");
+        return NULL;
+    }
+    ret = chunk->data + *offset;
+    *offset += stride;
+    return ret;
+}
+
+int mjpeg_encoder_encode_frame(MJpegEncoder *encoder, const SpiceRect *src,
+                               const SpiceBitmap *image, int top_down)
+{
+    SpiceChunks *chunks;
+    uint32_t image_stride;
+    size_t offset;
+    int i, chunk;
+
+    chunks = image->data;
+    offset = 0;
+    chunk = 0;
+    image_stride = image->stride;
+
+    const int skip_lines = top_down ? src->top : image->y - (src->bottom - 0);
+    for (i = 0; i < skip_lines; i++) {
+        get_image_line(chunks, &offset, &chunk, image_stride);
+    }
+
+    const unsigned int stream_height = src->bottom - src->top;
+    const unsigned int stream_width = src->right - src->left;
+
+    for (i = 0; i < stream_height; i++) {
+        uint8_t *src_line = get_image_line(chunks, &offset, &chunk, image_stride);
+
+        if (!src_line) {
+            return FALSE;
+        }
+
+        src_line += src->left * mjpeg_encoder_get_bytes_per_pixel(encoder);
+        if (mjpeg_encoder_encode_scanline(encoder, src_line, stream_width) == 0) {
+            return FALSE;
+        }
+    }
+
+    return TRUE;
 }
 
 static void mjpeg_encoder_quality_eval_stop(MJpegEncoder *encoder)
@@ -1020,6 +1085,7 @@ static void mjpeg_encoder_increase_bit_rate(MJpegEncoder *encoder)
                                            rate_control->quality_id,
                                            rate_control->fps);
 }
+
 static void mjpeg_encoder_handle_positive_client_stream_report(MJpegEncoder *encoder,
                                                                uint32_t report_start_frame_mm_time)
 {
