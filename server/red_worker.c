@@ -8512,8 +8512,7 @@ static int encode_frame(DisplayChannelClient *dcc, const SpiceRect *src,
     const unsigned int stream_width = src->right - src->left;
 
     for (i = 0; i < stream_height; i++) {
-        uint8_t *src_line =
-            (uint8_t *)red_get_image_line(chunks, &offset, &chunk, image_stride);
+        uint8_t *src_line = red_get_image_line(chunks, &offset, &chunk, image_stride);
 
         if (!src_line) {
             return FALSE;
