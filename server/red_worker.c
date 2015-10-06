@@ -8245,69 +8245,6 @@ static inline void display_begin_send_message(RedChannelClient *rcc)
     red_channel_client_begin_send_message(rcc);
 }
 
-static inline uint8_t *red_get_image_line(SpiceChunks *chunks, size_t *offset,
-                                          int *chunk_nr, int stride)
-{
-    uint8_t *ret;
-    SpiceChunk *chunk;
-
-    chunk = &chunks->chunk[*chunk_nr];
-
-    if (*offset == chunk->len) {
-        if (*chunk_nr == chunks->num_chunks - 1) {
-            return NULL; /* Last chunk */
-        }
-        *offset = 0;
-        (*chunk_nr)++;
-        chunk = &chunks->chunk[*chunk_nr];
-    }
-
-    if (chunk->len - *offset < stride) {
-        spice_warning("bad chunk alignment");
-        return NULL;
-    }
-    ret = chunk->data + *offset;
-    *offset += stride;
-    return ret;
-}
-
-static int encode_frame(DisplayChannelClient *dcc, const SpiceRect *src,
-                        const SpiceBitmap *image, Stream *stream)
-{
-    SpiceChunks *chunks;
-    uint32_t image_stride;
-    size_t offset;
-    int i, chunk;
-    StreamAgent *agent = &dcc->stream_agents[stream - dcc->common.worker->streams_buf];
-
-    chunks = image->data;
-    offset = 0;
-    chunk = 0;
-    image_stride = image->stride;
-
-    const int skip_lines = stream->top_down ? src->top : image->y - (src->bottom - 0);
-    for (i = 0; i < skip_lines; i++) {
-        red_get_image_line(chunks, &offset, &chunk, image_stride);
-    }
-
-    const unsigned int stream_height = src->bottom - src->top;
-    const unsigned int stream_width = src->right - src->left;
-
-    for (i = 0; i < stream_height; i++) {
-        uint8_t *src_line = red_get_image_line(chunks, &offset, &chunk, image_stride);
-
-        if (!src_line) {
-            return FALSE;
-        }
-
-        src_line += src->left * mjpeg_encoder_get_bytes_per_pixel(agent->mjpeg_encoder);
-        if (mjpeg_encoder_encode_scanline(agent->mjpeg_encoder, src_line, stream_width) == 0)
-            return FALSE;
-    }
-
-    return TRUE;
-}
-
 static inline int red_marshall_stream_data(RedChannelClient *rcc,
                   SpiceMarshaller *base_marshaller, Drawable *drawable)
 {
@@ -8366,6 +8303,7 @@ static inline int red_marshall_stream_data(RedChannelClient *rcc,
     frame_mm_time =  drawable->red_drawable->mm_time ?
                         drawable->red_drawable->mm_time :
                         reds_get_mm_time();
+
     outbuf_size = dcc->send_data.stream_outbuf_size;
     ret = mjpeg_encoder_start_frame(agent->mjpeg_encoder, image->u.bitmap.format,
                                     width, height,
@@ -8388,10 +8326,11 @@ static inline int red_marshall_stream_data(RedChannelClient *rcc,
         return FALSE;
     }
 
-    if (!encode_frame(dcc, &drawable->red_drawable->u.copy.src_area,
-                      &image->u.bitmap, stream)) {
-        return FALSE;
-    }
+    if (!mjpeg_encoder_encode_frame(agent->mjpeg_encoder,
+                                    &drawable->red_drawable->u.copy.src_area,
+                                    &image->u.bitmap, stream->top_down)) {
+         return FALSE;
+     }
     n = mjpeg_encoder_end_frame(agent->mjpeg_encoder);
     dcc->send_data.stream_outbuf_size = outbuf_size;
 

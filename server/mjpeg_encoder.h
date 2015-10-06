@@ -53,8 +53,6 @@ MJpegEncoder *mjpeg_encoder_new(uint64_t starting_bit_rate,
                                 MJpegEncoderRateControlCbs *cbs, void *opaque);
 void mjpeg_encoder_destroy(MJpegEncoder *encoder);
 
-uint8_t mjpeg_encoder_get_bytes_per_pixel(MJpegEncoder *encoder);
-
 /*
  * dest must be either NULL or allocated by malloc, since it might be freed
  * during the encoding, if its size is too small.
@@ -70,8 +68,8 @@ int mjpeg_encoder_start_frame(MJpegEncoder *encoder, SpiceBitmapFmt format,
                               int width, int height,
                               uint8_t **dest, size_t *dest_len,
                               uint32_t frame_mm_time);
-int mjpeg_encoder_encode_scanline(MJpegEncoder *encoder, uint8_t *src_pixels,
-                                  size_t image_width);
+int mjpeg_encoder_encode_frame(MJpegEncoder *encoder, const SpiceRect *src,
+                               const SpiceBitmap *image, int top_down);
 size_t mjpeg_encoder_end_frame(MJpegEncoder *encoder);
 
 /*
