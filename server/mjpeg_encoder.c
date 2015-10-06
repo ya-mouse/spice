@@ -692,11 +692,22 @@ static void mjpeg_encoder_adjust_fps(MJpegEncoder *encoder, uint64_t now)
     }
 }
 
-int mjpeg_encoder_start_frame(MJpegEncoder *encoder,
-                              SpiceBitmapFmt format,
-                              int width, int height,
-                              uint8_t **dest, size_t *dest_len,
-                              uint32_t frame_mm_time)
+/*
+ * dest must be either NULL or allocated by malloc, since it might be freed
+ * during the encoding, if its size is too small.
+ *
+ * return:
+ *  MJPEG_ENCODER_FRAME_UNSUPPORTED : frame cannot be encoded
+ *  MJPEG_ENCODER_FRAME_DROP        : frame should be dropped. This value can only be returned
+ *                                    if mjpeg rate control is active.
+ *  MJPEG_ENCODER_FRAME_ENCODE_DONE : frame encoding started. Continue with
+ *                                    mjpeg_encoder_encode_scanline.
+ */
+static int mjpeg_encoder_start_frame(MJpegEncoder *encoder,
+                                     SpiceBitmapFmt format,
+                                     int width, int height,
+                                     uint8_t **dest, size_t *dest_len,
+                                     uint32_t frame_mm_time)
 {
     uint32_t quality;
 
@@ -791,7 +802,7 @@ int mjpeg_encoder_start_frame(MJpegEncoder *encoder,
 
     encoder->num_frames++;
     encoder->avg_quality += quality;
-    return MJPEG_ENCODER_FRAME_ENCODE_START;
+    return MJPEG_ENCODER_FRAME_ENCODE_DONE;
 }
 
 static int mjpeg_encoder_encode_scanline(MJpegEncoder *encoder,
@@ -823,7 +834,7 @@ static int mjpeg_encoder_encode_scanline(MJpegEncoder *encoder,
     return scanlines_written;
 }
 
-size_t mjpeg_encoder_end_frame(MJpegEncoder *encoder)
+static size_t mjpeg_encoder_end_frame(MJpegEncoder *encoder)
 {
     mem_destination_mgr *dest = (mem_destination_mgr *) encoder->cinfo.dest;
     MJpegEncoderRateControl *rate_control = &encoder->rate_control;
@@ -878,8 +889,8 @@ static inline uint8_t *get_image_line(SpiceChunks *chunks, size_t *offset,
     return ret;
 }
 
-int mjpeg_encoder_encode_frame(MJpegEncoder *encoder, const SpiceRect *src,
-                               const SpiceBitmap *image, int top_down)
+static int encode_frame(MJpegEncoder *encoder, const SpiceRect *src,
+                        const SpiceBitmap *image, int top_down)
 {
     SpiceChunks *chunks;
     uint32_t image_stride;
@@ -914,6 +925,30 @@ int mjpeg_encoder_encode_frame(MJpegEncoder *encoder, const SpiceRect *src,
 
     return TRUE;
 }
+
+int mjpeg_encoder_encode_frame(MJpegEncoder *encoder,
+                               const SpiceBitmap *bitmap, int width, int height,
+                               const SpiceRect *src,
+                               int top_down, uint32_t frame_mm_time,
+                               uint8_t **outbuf, size_t *outbuf_size,
+                               int *data_size)
+{
+    int ret = mjpeg_encoder_start_frame(encoder, bitmap->format,
+                                    width, height, outbuf, outbuf_size,
+                                    frame_mm_time);
+    if (ret != MJPEG_ENCODER_FRAME_ENCODE_DONE) {
+        return ret;
+    }
+
+    if (!encode_frame(encoder, src, bitmap, top_down)) {
+        return MJPEG_ENCODER_FRAME_UNSUPPORTED;
+    }
+
+    *data_size = mjpeg_encoder_end_frame(encoder);
+
+    return MJPEG_ENCODER_FRAME_ENCODE_DONE;
+}
+
 
 static void mjpeg_encoder_quality_eval_stop(MJpegEncoder *encoder)
 {

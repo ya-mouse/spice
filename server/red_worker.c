@@ -8305,11 +8305,12 @@ static inline int red_marshall_stream_data(RedChannelClient *rcc,
                         reds_get_mm_time();
 
     outbuf_size = dcc->send_data.stream_outbuf_size;
-    ret = mjpeg_encoder_start_frame(agent->mjpeg_encoder, image->u.bitmap.format,
-                                    width, height,
-                                    &dcc->send_data.stream_outbuf,
-                                    &outbuf_size,
-                                    frame_mm_time);
+    ret = mjpeg_encoder_encode_frame(agent->mjpeg_encoder,
+                                     &image->u.bitmap, width, height,
+                                     &drawable->red_drawable->u.copy.src_area,
+                                     stream->top_down, frame_mm_time,
+                                     &dcc->send_data.stream_outbuf,
+                                     &outbuf_size, &n);
     switch (ret) {
     case MJPEG_ENCODER_FRAME_DROP:
         spice_assert(dcc->use_mjpeg_encoder_rate_control);
@@ -8319,19 +8320,12 @@ static inline int red_marshall_stream_data(RedChannelClient *rcc,
         return TRUE;
     case MJPEG_ENCODER_FRAME_UNSUPPORTED:
         return FALSE;
-    case MJPEG_ENCODER_FRAME_ENCODE_START:
+    case MJPEG_ENCODER_FRAME_ENCODE_DONE:
         break;
     default:
-        spice_error("bad return value (%d) from mjpeg_encoder_start_frame", ret);
+        spice_error("bad return value (%d) from mjpeg_encoder_encode_frame", ret);
         return FALSE;
     }
-
-    if (!mjpeg_encoder_encode_frame(agent->mjpeg_encoder,
-                                    &drawable->red_drawable->u.copy.src_area,
-                                    &image->u.bitmap, stream->top_down)) {
-         return FALSE;
-     }
-    n = mjpeg_encoder_end_frame(agent->mjpeg_encoder);
     dcc->send_data.stream_outbuf_size = outbuf_size;
 
     if (!drawable->sized_stream) {
