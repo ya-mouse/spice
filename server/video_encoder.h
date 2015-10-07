@@ -145,6 +145,9 @@ struct VideoEncoder {
  * parameters.
  */
 typedef struct VideoEncoderRateControlCbs {
+    /* The opaque parameter for the callbacks */
+    void *opaque;
+
     /* Returns the stream's estimated roundtrip time in milliseconds. */
     uint32_t (*get_roundtrip_ms)(void *opaque);
 
@@ -170,21 +173,18 @@ typedef struct VideoEncoderRateControlCbs {
  * @starting_bit_rate: An initial estimate of the available stream bit rate or
  *                     zero if the client does not support rate control.
  * @cbs:               A set of callback methods to be used for rate control.
- * @cbs_opaque:        A pointer to be passed to the rate control callbacks.
  * @return:            A pointer to a structure implementing the VideoEncoder
  *                     methods.
  */
-typedef VideoEncoder* (*new_video_encoder_t)(SpiceVideoCodecType codec_type, uint64_t starting_bit_rate, VideoEncoderRateControlCbs *cbs, void *cbs_opaque);
+typedef VideoEncoder* (*new_video_encoder_t)(SpiceVideoCodecType codec_type, uint64_t starting_bit_rate, VideoEncoderRateControlCbs *cbs);
 
 VideoEncoder* mjpeg_encoder_new(SpiceVideoCodecType codec_type,
                                 uint64_t starting_bit_rate,
-                                VideoEncoderRateControlCbs *cbs,
-                                void *cbs_opaque);
+                                VideoEncoderRateControlCbs *cbs);
 #if defined(HAVE_GSTREAMER_1_0) || defined(HAVE_GSTREAMER_0_10)
 VideoEncoder* gstreamer_encoder_new(SpiceVideoCodecType codec_type,
                                     uint64_t starting_bit_rate,
-                                    VideoEncoderRateControlCbs *cbs,
-                                    void *cbs_opaque);
+                                    VideoEncoderRateControlCbs *cbs);
 #endif
 
 #define VIDEO_ENCODER_DEFAULT_PREFERENCE "spice:mjpeg;gstreamer:mjpeg;gstreamer:vp8"

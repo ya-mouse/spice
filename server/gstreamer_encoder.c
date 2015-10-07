@@ -75,7 +75,6 @@ typedef struct SpiceGstEncoder {
 
     /* Rate control callbacks */
     VideoEncoderRateControlCbs cbs;
-    void *cbs_opaque;
 
     /* Spice's initial bit rate estimation in bits per second. */
     uint64_t starting_bit_rate;
@@ -302,14 +301,14 @@ static inline double get_mbps(uint64_t bit_rate)
 static uint32_t get_source_fps(SpiceGstEncoder *encoder)
 {
     return encoder->cbs.get_source_fps ?
-        encoder->cbs.get_source_fps(encoder->cbs_opaque) : GSTE_DEFAULT_FPS;
+        encoder->cbs.get_source_fps(encoder->cbs.opaque) : GSTE_DEFAULT_FPS;
 }
 
 static uint32_t get_network_latency(SpiceGstEncoder *encoder)
 {
     /* Assume that the network latency is symmetric */
     return encoder->cbs.get_roundtrip_ms ?
-        encoder->cbs.get_roundtrip_ms(encoder->cbs_opaque) / 2 : 0;
+        encoder->cbs.get_roundtrip_ms(encoder->cbs.opaque) / 2 : 0;
 }
 
 static inline int rate_control_is_active(SpiceGstEncoder* encoder)
@@ -483,7 +482,7 @@ static void update_client_playback_delay(SpiceGstEncoder *encoder)
 {
     if (encoder->cbs.update_client_playback_delay) {
         uint32_t min_delay = get_min_playback_delay(encoder);
-        encoder->cbs.update_client_playback_delay(encoder->cbs_opaque, min_delay);
+        encoder->cbs.update_client_playback_delay(encoder->cbs.opaque, min_delay);
     }
 }
 
@@ -1453,8 +1452,7 @@ static void gst_encoder_get_stats(VideoEncoder *video_encoder,
 
 VideoEncoder *gstreamer_encoder_new(SpiceVideoCodecType codec_type,
                                     uint64_t starting_bit_rate,
-                                    VideoEncoderRateControlCbs *cbs,
-                                    void *cbs_opaque)
+                                    VideoEncoderRateControlCbs *cbs)
 {
     SpiceGstEncoder *encoder;
 
@@ -1487,7 +1485,6 @@ VideoEncoder *gstreamer_encoder_new(SpiceVideoCodecType codec_type,
     if (cbs) {
         encoder->cbs = *cbs;
     }
-    encoder->cbs_opaque = cbs_opaque;
     encoder->starting_bit_rate = starting_bit_rate;
 
     /* All the other fields are initialized to zero by spice_new0(). */

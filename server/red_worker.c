@@ -2897,8 +2897,7 @@ static void red_stream_update_client_playback_latency(void *opaque, uint32_t del
 /* A helper for red_display_create_stream(). */
 static VideoEncoder* red_display_create_video_encoder(DisplayChannelClient *dcc,
                                                       uint64_t starting_bit_rate,
-                                                      VideoEncoderRateControlCbs *cbs,
-                                                      void *cbs_opaque)
+                                                      VideoEncoderRateControlCbs *cbs)
 {
     RedWorker* worker = dcc->common.worker;
     int i;
@@ -2919,7 +2918,7 @@ static VideoEncoder* red_display_create_video_encoder(DisplayChannelClient *dcc,
             continue;
         }
 
-        video_encoder = video_codec->create(video_codec->type, starting_bit_rate, cbs, cbs_opaque);
+        video_encoder = video_codec->create(video_codec->type, starting_bit_rate, cbs);
         if (video_encoder) {
             return video_encoder;
         }
@@ -2927,7 +2926,7 @@ static VideoEncoder* red_display_create_video_encoder(DisplayChannelClient *dcc,
 
     /* Try to use the builtin MJPEG video encoder as a fallback */
     if (!client_has_multi_codec || red_channel_client_test_remote_cap(&dcc->common.base, SPICE_DISPLAY_CAP_CODEC_MJPEG)) {
-        return mjpeg_encoder_new(SPICE_VIDEO_CODEC_TYPE_MJPEG, starting_bit_rate, cbs, cbs_opaque);
+        return mjpeg_encoder_new(SPICE_VIDEO_CODEC_TYPE_MJPEG, starting_bit_rate, cbs);
     }
 
     return NULL;
@@ -2954,14 +2953,15 @@ static int red_display_create_stream(DisplayChannelClient *dcc, Stream *stream)
         VideoEncoderRateControlCbs video_cbs;
         uint64_t initial_bit_rate;
 
+        video_cbs.opaque = agent;
         video_cbs.get_roundtrip_ms = red_stream_video_encoder_get_roundtrip;
         video_cbs.get_source_fps = red_stream_video_encoder_get_source_fps;
         video_cbs.update_client_playback_delay = red_stream_update_client_playback_latency;
 
         initial_bit_rate = red_stream_get_initial_bit_rate(dcc, stream);
-        agent->video_encoder = red_display_create_video_encoder(dcc, initial_bit_rate, &video_cbs, agent);
+        agent->video_encoder = red_display_create_video_encoder(dcc, initial_bit_rate, &video_cbs);
     } else {
-        agent->video_encoder = red_display_create_video_encoder(dcc, 0, NULL, NULL);
+        agent->video_encoder = red_display_create_video_encoder(dcc, 0, NULL);
     }
     if (agent->video_encoder == NULL) {
         stream->refs--;
