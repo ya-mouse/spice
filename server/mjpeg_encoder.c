@@ -174,11 +174,6 @@ struct MJpegEncoder {
     uint32_t num_frames;
 };
 
-static inline void mjpeg_encoder_reset_quality(MJpegEncoder *encoder,
-                                               int quality_id,
-                                               uint32_t fps,
-                                               uint64_t frame_enc_size);
-static uint32_t get_max_fps(uint64_t frame_size, uint64_t bytes_per_sec);
 static void mjpeg_encoder_process_server_drops(MJpegEncoder *encoder);
 static uint32_t get_min_required_playback_delay(uint64_t frame_enc_size,
                                                 uint64_t byte_rate,
@@ -187,41 +182,6 @@ static uint32_t get_min_required_playback_delay(uint64_t frame_enc_size,
 static inline int rate_control_is_active(MJpegEncoder* encoder)
 {
     return encoder->cbs.get_roundtrip_ms != NULL;
-}
-
-MJpegEncoder *mjpeg_encoder_new(uint64_t starting_bit_rate,
-                                MJpegEncoderRateControlCbs *cbs, void *opaque)
-{
-    MJpegEncoder *enc;
-
-    spice_assert(!cbs || (cbs && cbs->get_roundtrip_ms && cbs->get_source_fps));
-
-    enc = spice_new0(MJpegEncoder, 1);
-
-    enc->first_frame = TRUE;
-    enc->rate_control.byte_rate = starting_bit_rate / 8;
-    enc->starting_bit_rate = starting_bit_rate;
-
-    if (cbs) {
-        struct timespec time;
-
-        clock_gettime(CLOCK_MONOTONIC, &time);
-        enc->cbs = *cbs;
-        enc->cbs_opaque = opaque;
-        mjpeg_encoder_reset_quality(enc, MJPEG_QUALITY_SAMPLE_NUM / 2, 5, 0);
-        enc->rate_control.during_quality_eval = TRUE;
-        enc->rate_control.quality_eval_data.type = MJPEG_QUALITY_EVAL_TYPE_SET;
-        enc->rate_control.quality_eval_data.reason = MJPEG_QUALITY_EVAL_REASON_RATE_CHANGE;
-        enc->rate_control.warmup_start_time = ((uint64_t) time.tv_sec) * 1000000000 + time.tv_nsec;
-    } else {
-        enc->cbs.get_roundtrip_ms = NULL;
-        mjpeg_encoder_reset_quality(enc, MJPEG_LEGACY_STATIC_QUALITY_ID, MJPEG_MAX_FPS, 0);
-    }
-
-    enc->cinfo.err = jpeg_std_error(&enc->jerr);
-    jpeg_create_compress(&enc->cinfo);
-
-    return enc;
 }
 
 void mjpeg_encoder_destroy(MJpegEncoder *encoder)
@@ -1275,4 +1235,38 @@ void mjpeg_encoder_get_stats(MJpegEncoder *encoder, MJpegEncoderStats *stats)
     stats->starting_bit_rate = encoder->starting_bit_rate;
     stats->cur_bit_rate = mjpeg_encoder_get_bit_rate(encoder);
     stats->avg_quality = (double)encoder->avg_quality / encoder->num_frames;
+}
+
+MJpegEncoder *mjpeg_encoder_new(uint64_t starting_bit_rate,
+                                MJpegEncoderRateControlCbs *cbs,
+                                void *cbs_opaque)
+{
+    spice_assert(!cbs || (cbs && cbs->get_roundtrip_ms && cbs->get_source_fps));
+
+    MJpegEncoder *encoder = spice_new0(MJpegEncoder, 1);
+
+    encoder->first_frame = TRUE;
+    encoder->rate_control.byte_rate = starting_bit_rate / 8;
+    encoder->starting_bit_rate = starting_bit_rate;
+
+    if (cbs) {
+        struct timespec time;
+
+        clock_gettime(CLOCK_MONOTONIC, &time);
+        encoder->cbs = *cbs;
+        encoder->cbs_opaque = cbs_opaque;
+        mjpeg_encoder_reset_quality(encoder, MJPEG_QUALITY_SAMPLE_NUM / 2, 5, 0);
+        encoder->rate_control.during_quality_eval = TRUE;
+        encoder->rate_control.quality_eval_data.type = MJPEG_QUALITY_EVAL_TYPE_SET;
+        encoder->rate_control.quality_eval_data.reason = MJPEG_QUALITY_EVAL_REASON_RATE_CHANGE;
+        encoder->rate_control.warmup_start_time = ((uint64_t) time.tv_sec) * 1000000000 + time.tv_nsec;
+    } else {
+        encoder->cbs.get_roundtrip_ms = NULL;
+        mjpeg_encoder_reset_quality(encoder, MJPEG_LEGACY_STATIC_QUALITY_ID, MJPEG_MAX_FPS, 0);
+    }
+
+    encoder->cinfo.err = jpeg_std_error(&encoder->jerr);
+    jpeg_create_compress(&encoder->cinfo);
+
+    return encoder;
 }
