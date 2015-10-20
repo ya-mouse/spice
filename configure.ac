@@ -87,6 +87,7 @@ AC_ARG_ENABLE(gstreamer,
               [],
               [enable_gstreamer="auto"])
 
+gstreamer_missing=""
 if test "x$enable_gstreamer" != "xno"; then
     PKG_CHECK_MODULES(GSTREAMER_1_0, [gstreamer-1.0, gstreamer-app-1.0],
                       [enable_gstreamer="yes"
@@ -97,6 +98,28 @@ if test "x$enable_gstreamer" != "xno"; then
         AC_SUBST(GSTREAMER_1_0_LIBS)
         AS_VAR_APPEND([SPICE_REQUIRES], [" gstreamer-1.0 gstreamer-app-1.0"])
         AC_DEFINE([HAVE_GSTREAMER_1_0], [1], [Define if supporting GStreamer 1.0])
+
+        dnl Warn if the GStreamer elements needed at runtime are missing
+        gstreamer_1_0_toolsdir=`$PKG_CONFIG --variable=toolsdir gstreamer-1.0`
+        gstreamer_1_0_inspect="$gstreamer_1_0_toolsdir/gst-inspect-1.0"
+        AC_MSG_CHECKING([GStreamer 1.0 inspection tool])
+        if test -r "$gstreamer_1_0_inspect"; then
+            AC_MSG_RESULT([yes])
+            for element in appsrc avenc_mjpeg vp8enc x264enc videoconvert appsink
+            do
+                AC_MSG_CHECKING([GStreamer 1.0 $element element])
+                if $gstreamer_1_0_inspect $element >/dev/null 2>/dev/null; then
+                    AC_MSG_RESULT([yes])
+                else
+                    AC_MSG_RESULT([no])
+                    gstreamer_missing="$gstreamer_missing $element"
+                fi
+            done
+        else
+            AC_MSG_RESULT([no])
+            gstreamer_missing="$gstreamer_missing gst-inspect-1.0"
+        fi
+
     elif test "x$enable_gstreamer" = "xyes"; then
         AC_MSG_ERROR([GStreamer 1.0 support requested but not found. You may set GSTREAMER_1_0_CFLAGS and GSTREAMER_1_0_LIBS to avoid the need to call pkg-config.])
     fi
@@ -346,6 +369,9 @@ echo "
 if test x"$arch_warn" != x; then
         AC_MSG_WARN([$arch_warn])
         echo ""
+fi
+if test x"$gstreamer_missing" != x; then
+    AC_MSG_WARN([The following GStreamer $enable_gstreamer tools/elements are missing:$gstreamer_missing. The GStreamer video encoder can be built but may not work.])
 fi
 
 echo \
