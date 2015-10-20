@@ -138,6 +138,31 @@ if test "x$enable_gstreamer" != "xno" && test "x$enable_gstreamer" != "x1.0"; th
         AC_SUBST(GSTREAMER_0_10_LIBS)
         AS_VAR_APPEND([SPICE_REQUIRES], [" gstreamer-0.10 gstreamer-app-0.10"])
         AC_DEFINE([HAVE_GSTREAMER_0_10], [1], [Define if supporting GStreamer 0.10])
+
+        dnl Warn if the GStreamer elements needed at runtime are missing
+        gstreamer_0_10_toolsdir=`$PKG_CONFIG --variable=toolsdir gstreamer-0.10`
+        gstreamer_0_10_inspect="$gstreamer_0_10_toolsdir/gst-inspect-0.10"
+        if ! test -e "$gstreamer_0_10_inspect"; then
+            gstreamer_0_10_inspect="$gstreamer_0_10_toolsdir/gst-inspect"
+        fi
+        AC_MSG_CHECKING([GStreamer 0.10 inspection tool])
+        if test -r "$gstreamer_0_10_inspect"; then
+            AC_MSG_RESULT([yes])
+            for element in appsrc ffenc_mjpeg vp8enc x264enc ffmpegcolorspace appsink
+            do
+                AC_MSG_CHECKING([GStreamer 0.10 $element element])
+                if $gstreamer_0_10_inspect $element >/dev/null 2>/dev/null; then
+                    AC_MSG_RESULT([yes])
+                else
+                    AC_MSG_RESULT([no])
+                    gstreamer_missing="$gstreamer_missing $element"
+                fi
+            done
+        else
+            AC_MSG_RESULT([no])
+            gstreamer_missing="$gstreamer_missing gst-inspect-0.10"
+        fi
+
     elif test "x$enable_gstreamer" = "x0.10"; then
         AC_MSG_ERROR([GStreamer 0.10 support requested but not found. You may set GSTREAMER_0_10_CFLAGS and GSTREAMER_0_10_LIBS to avoid the need to call pkg-config.])
     fi
