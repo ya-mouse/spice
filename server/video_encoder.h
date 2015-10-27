@@ -15,11 +15,11 @@
    Lesser General Public License for more details.
 
    You should have received a copy of the GNU Lesser General Public
-   License along with this library; if not, see <<A HREF="http://www.gnu.org/licenses/">http://www.gnu.org/licenses/</A>>.
+   License along with this library; if not, see <http://www.gnu.org/licenses/>.
 */
 
-#ifndef _H_video_encoder
-#define _H_video_encoder
+#ifndef _H_VIDEO_ENCODER
+#define _H_VIDEO_ENCODER
 
 #include "red_common.h"
 

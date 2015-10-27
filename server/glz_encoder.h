@@ -42,7 +42,7 @@ void glz_encoder_destroy(GlzEncoderContext *opaque_encoder);
 
         return: the number of bytes in the compressed data and sets o_enc_dict_context
 
-        NOTE  :	currently supports only rgb images in which width*bytes_per_pixel = stride OR
+        NOTE  : currently supports only rgb images in which width*bytes_per_pixel = stride OR
                 palette images in which stride equals the min number of bytes to hold a line.
                 The stride should be > 0
 */

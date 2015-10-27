@@ -455,7 +455,7 @@ static void red_channel_client_reset_send_data(RedChannelClient *rcc)
     rcc->send_data.header.set_msg_type(&rcc->send_data.header, 0);
     rcc->send_data.header.set_msg_size(&rcc->send_data.header, 0);
 
-    /* Keeping the serial consecutive: reseting it if reset_send_data
+    /* Keeping the serial consecutive: resetting it if reset_send_data
      * has been called before, but no message has been sent since then.
      */
     if (rcc->send_data.last_sent_serial != rcc->send_data.serial) {
@@ -1088,7 +1088,7 @@ static void dummy_watch_remove(SpiceWatch *watch)
 {
 }
 
-// TODO: actually, since I also use channel_client_dummym, no need for core. Can be NULL
+// TODO: actually, since I also use channel_client_dummy, no need for core. Can be NULL
 SpiceCoreInterface dummy_core = {
     .watch_update_mask = dummy_watch_update_mask,
     .watch_add = dummy_watch_add,
@@ -2427,5 +2427,14 @@ int red_channel_wait_all_sent(RedChannel *channel,
     } else {
         spice_assert(red_channel_no_item_being_sent(channel));
         return TRUE;
+    }
+}
+
+void red_channel_client_disconnect_if_pending_send(RedChannelClient *rcc)
+{
+    if (red_channel_client_blocked(rcc) || rcc->pipe_size > 0) {
+        red_channel_client_disconnect(rcc);
+    } else {
+        spice_assert(red_channel_client_no_item_being_sent(rcc));
     }
 }

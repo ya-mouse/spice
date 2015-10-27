@@ -289,7 +289,7 @@ static void __glz_dictionary_window_segs_realloc(SharedDictionary *dict)
     memcpy(new_segs, dict->window.segs,
            sizeof(WindowImageSegment) * dict->window.segs_quota);
 
-    // reseting the new elements
+    // resetting the new elements
     for (i = dict->window.segs_quota, seg = new_segs + i; i < new_quota; i++, seg++) {
         seg->image = NULL;
         seg->lines = NULL;

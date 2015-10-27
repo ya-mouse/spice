@@ -90,8 +90,6 @@ libspice_server_la_SOURCES =			\
 	red_bitmap_utils.h			\
 	red_channel.c				\
 	red_channel.h				\
-	red_client_cache.h			\
-	red_client_shared_cache.h		\
 	red_common.h				\
 	dispatcher.c				\
 	dispatcher.h				\
@@ -132,6 +130,8 @@ libspice_server_la_SOURCES =			\
 	spice_server_utils.h		\
 	spice_image_cache.h			\
 	spice_image_cache.c			\
+	pixmap-cache.h				\
+	pixmap-cache.c				\
 	aspeed_encoder.c			\
 	$(NULL)
 
@@ -162,6 +162,7 @@ libspice_server_la_SOURCES +=	\
 endif
 
 EXTRA_DIST =					\
+	cache_item.tmpl.c			\
 	glz_encode_match_tmpl.c			\
 	glz_encode_tmpl.c			\
 	spice-server.syms			\

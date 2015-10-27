@@ -9,3 +9,4 @@ Makefile.in
 generated_demarshallers.c
 generated_marshallers.c
 generated_marshallers.h
+spice-version.h

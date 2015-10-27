@@ -30,3 +30,5 @@ stamp-h1
 INSTALL
 .version
 .tarball-version
+docs/manual/manual.chunked/
+docs/manual/manual.html

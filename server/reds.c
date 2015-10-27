@@ -401,7 +401,7 @@ static void reds_reset_vdp(void)
     state->write_filter.discard_all = TRUE;
     state->client_agent_started = FALSE;
 
-    /* reseting and not destroying the state as a workaround for a bad
+    /* resetting and not destroying the state as a workaround for a bad
      * tokens management in the vdagent protocol:
      *  The client tokens' are set only once, when the main channel is initialized.
      *  Instead, it would have been more appropriate to reset them upon AGEN_CONNECT.

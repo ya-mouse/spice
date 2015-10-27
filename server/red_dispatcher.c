@@ -253,11 +253,7 @@ int red_dispatcher_add_renderer(const char *name)
 static const EnumNames video_encoder_names[] = {
     {0, "spice"},
     {1, "gstreamer"},
-#if defined(HAVE_GSTREAMER_1_0) || defined(HAVE_GSTREAMER_0_10)
     {2, "aspeed"},
-#else
-    {1, "aspeed"},
-#endif
     {0, NULL},
 };
 
@@ -266,9 +262,9 @@ static new_video_encoder_t video_encoder_procs[] = {
 #if defined(HAVE_GSTREAMER_1_0) || defined(HAVE_GSTREAMER_0_10)
     &gstreamer_encoder_new,
 #else
-    &aspeed_encoder_new,
     NULL,
 #endif
+    &aspeed_encoder_new,
 };
 
 static const EnumNames video_codec_names[] = {
@@ -282,6 +278,7 @@ static const EnumNames video_codec_names[] = {
 static const EnumNames video_cap_names[] = {
     {SPICE_DISPLAY_CAP_CODEC_MJPEG, "mjpeg"},
     {SPICE_DISPLAY_CAP_CODEC_VP8, "vp8"},
+    {SPICE_DISPLAY_CAP_CODEC_H264, "h264"},
     {SPICE_DISPLAY_CAP_CODEC_ASPEED, "aspeed"},
     {0, NULL},
 };
@@ -1211,11 +1208,15 @@ void red_dispatcher_init(QXLInstance *qxl)
 
     spice_return_if_fail(qxl->st->dispatcher == NULL);
 
-    quic_init();
-    sw_canvas_init();
+    static gsize initialized = FALSE;
+    if (g_once_init_enter(&initialized)) {
+        quic_init();
+        sw_canvas_init();
 #ifdef USE_OPENGL
-    gl_canvas_init();
+        gl_canvas_init();
 #endif // USE_OPENGL
+        g_once_init_leave(&initialized, TRUE);
+    }
 
     red_dispatcher = spice_new0(RedDispatcher, 1);
     ring_init(&red_dispatcher->async_commands);

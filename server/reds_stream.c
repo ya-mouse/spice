@@ -448,16 +448,16 @@ static void async_read_handler(G_GNUC_UNUSED int fd,
                     break;
                 default:
                     async_read_clear_handlers(async);
-		    if (async->error) {
+                    if (async->error) {
                         async->error(async->opaque, errno);
-		    }
+                    }
                     return;
                 }
             } else {
                 async_read_clear_handlers(async);
-		if (async->error) {
-		    async->error(async->opaque, 0);
-		}
+                if (async->error) {
+                    async->error(async->opaque, 0);
+                }
                 return;
             }
         } else {

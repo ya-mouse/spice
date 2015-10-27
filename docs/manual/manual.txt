@@ -169,7 +169,7 @@ Client mouse::
 Not captured and is used as the effective pointing device. To enable
 client mouse, the VDI host application must register an absolute
 pointing device (e.g. USB tablet in QEMU). This mode is appropriate
-for WAN or or for a loaded server, since cursor has smooth motion and
+for WAN or for a loaded server, since cursor has smooth motion and
 responsiveness. However, the cursor might lose synchronization
 (position and shape) for a while.
 
