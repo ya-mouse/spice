@@ -119,8 +119,8 @@
 #define RED_STREAM_DETACTION_MAX_DELTA ((1000 * 1000 * 1000) / 5) // 1/5 sec
 #define RED_STREAM_CONTINUS_MAX_DELTA (1000 * 1000 * 1000)
 #define RED_STREAM_TIMOUT (1000 * 1000 * 1000)
-#define RED_STREAM_FRAMES_START_CONDITION 20
-#define RED_STREAM_GRADUAL_FRAMES_START_CONDITION 0.2
+#define RED_STREAM_FRAMES_START_CONDITION 1 // 20
+#define RED_STREAM_GRADUAL_FRAMES_START_CONDITION 1.0 // 0.2
 #define RED_STREAM_FRAMES_RESET_CONDITION 100
 #define RED_STREAM_MIN_SIZE (96 * 96)
 #define RED_STREAM_INPUT_FPS_TIMEOUT ((uint64_t)5 * 1000 * 1000 * 1000) // 5 sec
@@ -2301,6 +2301,7 @@ static inline void __exclude_region(RedWorker *worker, Ring *ring, TreeItem *ite
                 }
             } else {
                 if (frame_candidate) {
+                    printf("frame_candidate\n");
                     Drawable *drawable = SPICE_CONTAINEROF(draw, Drawable, tree_item);
                     red_stream_maintenance(worker, frame_candidate, drawable);
                 }
@@ -2673,7 +2674,7 @@ static void red_stop_stream(RedWorker *worker, Stream *stream)
 
     spice_assert(ring_item_is_linked(&stream->link));
     spice_assert(!stream->current);
-    spice_debug("stream %d", get_stream_id(worker, stream));
+    printf("stop stream %d\n", get_stream_id(worker, stream));
     WORKER_FOREACH_DCC_SAFE(worker, item, next, dcc) {
         StreamAgent *stream_agent;
 
@@ -2729,6 +2730,7 @@ static inline void red_display_detach_stream_gracefully(DisplayChannelClient *dc
     region_clear(&agent->clip);
     push_stream_clip(dcc, agent);
 
+    printf("%s\n", __func__);
     if (region_is_empty(&agent->vis_region)) {
         spice_debug("stream %d: vis region empty", stream_id);
         return;
@@ -3077,6 +3079,7 @@ static VideoEncoder* red_display_create_video_encoder(DisplayChannelClient *dcc,
     int i;
     int client_has_multi_codec = red_channel_client_test_remote_cap(&dcc->common.base, SPICE_DISPLAY_CAP_MULTI_CODEC);
 
+    printf("-- red_display_create_video_encoder: multi=%d dcc.base=%ld\n", client_has_multi_codec, dcc->common.base);
     for (i = 0; i < worker->num_video_codecs; i++) {
         RedVideoCodec* video_codec = &worker->video_codecs[i];
         VideoEncoder* video_encoder;
@@ -3092,6 +3095,7 @@ static VideoEncoder* red_display_create_video_encoder(DisplayChannelClient *dcc,
             continue;
         }
 
+        printf("+++ create type=%d\n", video_codec->type);
         video_encoder = video_codec->create(video_codec->type, starting_bit_rate, cbs, cbs_opaque);
         if (video_encoder) {
             return video_encoder;
@@ -3123,6 +3127,7 @@ static int red_display_create_stream(DisplayChannelClient *dcc, Stream *stream)
     agent->fps = MAX_FPS;
     agent->dcc = dcc;
 
+    printf("-- red_display_create_stream\n");
     if (dcc->use_video_encoder_rate_control) {
         VideoEncoderRateControlCbs video_cbs;
         uint64_t initial_bit_rate;
@@ -3170,6 +3175,7 @@ static void red_create_stream(RedWorker *worker, Drawable *drawable)
 
     spice_assert(!drawable->stream);
 
+    printf("-- red_create_stream\n");
     if (!(stream = red_alloc_stream(worker))) {
         return;
     }
@@ -3200,7 +3206,7 @@ static void red_create_stream(RedWorker *worker, Drawable *drawable)
             return;
         }
     }
-    spice_debug("stream %d %dx%d (%d, %d) (%d, %d)", (int)(stream - worker->streams_buf), stream->width,
+    spice_warning("stream %d %dx%d (%d, %d) (%d, %d)", (int)(stream - worker->streams_buf), stream->width,
                 stream->height, stream->dest_area.left, stream->dest_area.top,
                 stream->dest_area.right, stream->dest_area.bottom);
     return;
@@ -3211,6 +3217,7 @@ static void red_disply_start_streams(DisplayChannelClient *dcc)
     Ring *ring = &dcc->common.worker->streams;
     RingItem *item = ring;
 
+    printf("-- red_disply_start_streams\n");
     while ((item = ring_next(ring, item))) {
         Stream *stream = SPICE_CONTAINEROF(item, Stream, link);
         if (!red_display_create_stream(dcc, stream)) {
@@ -3324,6 +3331,9 @@ static inline int __red_is_next_stream_frame(RedWorker *worker,
     }
 
     if (stream) {
+        if (red_drawable->u.copy.src_bitmap->descriptor.type == SPICE_IMAGE_TYPE_AST) {
+            return STREAM_FRAME_NATIVE;
+        }
         SpiceBitmap *bitmap = &red_drawable->u.copy.src_bitmap->u.bitmap;
         if (stream->top_down != !!(bitmap->flags & SPICE_BITMAP_FLAGS_TOP_DOWN)) {
             return STREAM_FRAME_NONE;
@@ -3451,6 +3461,7 @@ static inline void red_update_copy_graduality(RedWorker* worker, Drawable *drawa
 
 static inline int red_is_stream_start(Drawable *drawable)
 {
+    printf("fc=%d gfc=%d\n", drawable->frames_count, drawable->gradual_frames_count);
     return ((drawable->frames_count >= RED_STREAM_FRAMES_START_CONDITION) &&
             (drawable->gradual_frames_count >=
             (RED_STREAM_GRADUAL_FRAMES_START_CONDITION * drawable->frames_count)));
@@ -3497,6 +3508,7 @@ static inline void red_stream_maintenance(RedWorker *worker, Drawable *candidate
     }
 
     if ((stream = prev->stream)) {
+        //printf("is_next_frame\n");
         int is_next_frame = __red_is_next_stream_frame(worker,
                                                        candidate,
                                                        stream->width,
@@ -3508,6 +3520,7 @@ static inline void red_stream_maintenance(RedWorker *worker, Drawable *candidate
         if (is_next_frame != STREAM_FRAME_NONE) {
             pre_stream_item_swap(worker, stream, candidate);
             red_detach_stream(worker, stream, FALSE);
+            //printf("NOT STREAMABLE\n");
             prev->streamable = FALSE; //prevent item trace
             red_attach_stream(worker, candidate, stream);
             if (is_next_frame == STREAM_FRAME_CONTAINER) {
@@ -3515,7 +3528,9 @@ static inline void red_stream_maintenance(RedWorker *worker, Drawable *candidate
             }
         }
     } else {
+        printf("red_stream_maint\n");
         if (red_is_next_stream_frame(worker, candidate, prev) != STREAM_FRAME_NONE) {
+            printf("--add\n");
             red_stream_add_frame(worker, candidate,
                                  prev->frames_count,
                                  prev->gradual_frames_count,
@@ -3658,6 +3673,7 @@ static inline void red_use_stream_trace(RedWorker *worker, Drawable *drawable)
                                                        TRUE);
         if (is_next_frame != STREAM_FRAME_NONE) {
             if (stream->current) {
+                //printf("NOT STREAMABLE 2\n");
                 stream->current->streamable = FALSE; //prevent item trace
                 pre_stream_item_swap(worker, stream, drawable);
                 red_detach_stream(worker, stream, FALSE);
@@ -3924,7 +3940,8 @@ static inline void red_update_streamable(RedWorker *worker, Drawable *drawable,
 
     image = red_drawable->u.copy.src_bitmap;
     if (image == NULL ||
-        image->descriptor.type != SPICE_IMAGE_TYPE_BITMAP) {
+        (image->descriptor.type != SPICE_IMAGE_TYPE_BITMAP &&
+         image->descriptor.type != SPICE_IMAGE_TYPE_AST)) {
         return;
     }
 
@@ -4420,6 +4437,14 @@ static void localize_bitmap(RedWorker *worker, SpiceImage **image_ptr, SpiceImag
         if (image_store->descriptor.width * image->descriptor.height >= 640 * 480) {
             image_store->descriptor.flags |= SPICE_IMAGE_FLAGS_CACHE_ME;
         }
+#endif
+        break;
+    }
+    case SPICE_IMAGE_TYPE_AST: {
+#if 0
+        image_store->descriptor = image->descriptor;
+        image_store->u.ast = image->u.ast;
+        *image_ptr = image_store;
 #endif
         break;
     }
@@ -6898,6 +6923,12 @@ static FillBitsType fill_bits(DisplayChannelClient *dcc, SpiceMarshaller *m,
         spice_marshaller_add_ref_chunks(m, image.u.quic.data);
         pthread_mutex_unlock(&dcc->pixmap_cache->lock);
         return FILL_BITS_TYPE_COMPRESS_LOSSLESS;
+    case SPICE_IMAGE_TYPE_AST:
+        image.u.ast = simage->u.ast;
+        spice_marshall_Image(m, &image,
+                             &bitmap_palette_out, &lzplt_palette_out);
+        spice_marshaller_add_ref_chunks(m, simage->u.ast.data);
+        return FILL_BITS_TYPE_BITMAP;
     default:
         spice_error("invalid image type %u", image.descriptor.type);
     }
@@ -8544,7 +8575,8 @@ static inline int red_marshall_stream_data(RedChannelClient *rcc,
     worker = display_channel->common.worker;
     image = drawable->red_drawable->u.copy.src_bitmap;
 
-    if (image->descriptor.type != SPICE_IMAGE_TYPE_BITMAP) {
+    if ((image->descriptor.type != SPICE_IMAGE_TYPE_BITMAP &&
+         image->descriptor.type != SPICE_IMAGE_TYPE_AST)) {
         return FALSE;
     }
 
@@ -8649,9 +8681,12 @@ static inline void marshall_qxl_drawable(RedChannelClient *rcc,
     spice_assert(display_channel && rcc);
     /* allow sized frames to be streamed, even if they where replaced by another frame, since
      * newer frames might not cover sized frames completely if they are bigger */
+//    printf("item->stream=%p item->sized_stream=%p ", item->stream, item->sized_stream);
     if ((item->stream || item->sized_stream) && red_marshall_stream_data(rcc, m, item)) {
+//        printf("-->\n");
         return;
     }
+//    printf(" enable_jpeg=%d\n", display_channel->enable_jpeg);
     if (!display_channel->enable_jpeg)
         red_marshall_qxl_drawable(display_channel->common.worker, rcc, m, dpi);
     else
@@ -9182,9 +9217,11 @@ static void display_channel_send_item(RedChannelClient *rcc, PipeItem *pipe_item
     SpiceMarshaller *m = red_channel_client_get_marshaller(rcc);
     DisplayChannelClient *dcc = RCC_TO_DCC(rcc);
 
+//    printf("display_channel_send_item: %d\n", pipe_item->type);
     red_display_reset_send_data(dcc);
     switch (pipe_item->type) {
     case PIPE_ITEM_TYPE_DRAW: {
+//        printf("PIPE_ITEM_TYPE_DRAW\n");
         DrawablePipeItem *dpi = SPICE_CONTAINEROF(pipe_item, DrawablePipeItem, dpi_pipe_item);
         marshall_qxl_drawable(rcc, m, dpi);
         break;
@@ -9193,6 +9230,7 @@ static void display_channel_send_item(RedChannelClient *rcc, PipeItem *pipe_item
         red_marshall_inval(rcc, m, (CacheItem *)pipe_item);
         break;
     case PIPE_ITEM_TYPE_STREAM_CREATE: {
+//        printf("PIPE_ITEM_TYPE_STREAM_CREATE\n");
         StreamAgent *agent = SPICE_CONTAINEROF(pipe_item, StreamAgent, create_item);
         red_display_marshall_stream_start(rcc, m, agent);
         break;
@@ -9807,6 +9845,7 @@ static void on_new_display_channel_client(DisplayChannelClient *dcc)
 
     red_channel_client_push_set_ack(&dcc->common.base);
 
+    printf("-- on_new_display_channel_client\n");
     if (red_channel_client_waits_for_migrate_data(rcc)) {
         return;
     }
@@ -9815,6 +9854,7 @@ static void on_new_display_channel_client(DisplayChannelClient *dcc)
         return;
     }
     red_channel_client_ack_zero_messages_window(&dcc->common.base);
+    printf("== context.canvas=%p\n", worker->surfaces[0].context.canvas);
     if (worker->surfaces[0].context.canvas) {
         red_current_flush(worker, 0);
         push_new_primary_surface(dcc);
@@ -11596,7 +11636,7 @@ void handle_dev_display_connect(void *opaque, void *payload)
     RedClient *client = msg->client;
     int migration = msg->migration;
 
-    spice_info("connect");
+    printf("+++ connect\n");
     handle_new_display_channel(worker, client, stream, migration,
                                msg->common_caps, msg->num_common_caps,
                                msg->caps, msg->num_caps);

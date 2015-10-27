@@ -114,7 +114,7 @@ static void write_binary(FILE *fd, const char *prefix, size_t size, const uint8_
     }
 #endif
 
-    fprintf(fd, "binary %d %s %ld:", WITH_ZLIB, prefix, size);
+    fprintf(fd, "binary %d %s %d:", WITH_ZLIB, prefix, size);
 #if WITH_ZLIB
     zlib_size = zlib_encode(enc, RECORD_ZLIB_DEFAULT_COMPRESSION_LEVEL, size,
         output, sizeof(output));

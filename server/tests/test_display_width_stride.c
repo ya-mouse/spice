@@ -22,7 +22,7 @@ void pinger(void *opaque)
     test->core->timer_start(ping_timer, ping_ms);
 }
 
-static int g_surface_id = 1;
+static int g_surface_id = 0;
 static uint8_t *g_surface_data;
 
 void set_draw_parameters(SPICE_GNUC_UNUSED Test *test,
@@ -30,13 +30,14 @@ void set_draw_parameters(SPICE_GNUC_UNUSED Test *test,
 {
     static int count = 17;
     CommandDrawSolid *solid = &command->solid;
-
+#if 0
     solid->bbox.top = 0;
     solid->bbox.left = 0;
     solid->bbox.bottom = 20;
     solid->bbox.right = count;
     solid->surface_id = g_surface_id;
     count++;
+#endif
 }
 
 void set_surface_params(SPICE_GNUC_UNUSED Test *test,
@@ -66,8 +67,9 @@ void set_destroy_parameters(SPICE_GNUC_UNUSED Test *test,
 }
 
 static Command commands[] = {
-    {SIMPLE_CREATE_SURFACE, set_surface_params, .cb_opaque = NULL},
-    {SIMPLE_DRAW_SOLID, set_draw_parameters, .cb_opaque = NULL},
+//    {SIMPLE_CREATE_SURFACE, set_surface_params, .cb_opaque = NULL},
+    {SIMPLE_DRAW, set_draw_parameters, .cb_opaque = NULL},
+#if 0
     {SIMPLE_DRAW_SOLID, set_draw_parameters, .cb_opaque = NULL},
     {SIMPLE_DRAW_SOLID, set_draw_parameters, .cb_opaque = NULL},
     {SIMPLE_DRAW_SOLID, set_draw_parameters, .cb_opaque = NULL},
@@ -77,11 +79,12 @@ static Command commands[] = {
     {SIMPLE_DRAW_SOLID, set_draw_parameters, .cb_opaque = NULL},
     {SIMPLE_DRAW_SOLID, set_draw_parameters, .cb_opaque = NULL},
     {SIMPLE_DESTROY_SURFACE, set_destroy_parameters, .cb_opaque = NULL},
+#endif
 };
 
 void on_client_connected(Test *test)
 {
-    test_set_command_list(test, commands, COUNT(commands));
+//    test_set_command_list(test, commands, COUNT(commands));
 }
 
 int main(void)
@@ -93,7 +96,9 @@ int main(void)
     test = test_new(core);
     test->on_client_connected = on_client_connected;
     //spice_server_set_image_compression(server, SPICE_IMAGE_COMPRESSION_OFF);
+    spice_server_set_streaming_video(test->server, SPICE_STREAM_VIDEO_ALL);
     test_add_display_interface(test);
+    test_set_command_list(test, commands, COUNT(commands));
 
     ping_timer = core->timer_add(pinger, test);
     core->timer_start(ping_timer, ping_ms);

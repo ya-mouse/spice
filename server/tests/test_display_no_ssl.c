@@ -7,13 +7,22 @@
  */
 
 #include <config.h>
+#include <stdio.h>
 #include <stdlib.h>
-#include "test_display_base.h"
+#include <string.h>
+#include <fcntl.h>
+#include <errno.h>
+#include <unistd.h>
+#include <sys/mman.h>
+#include <sys/ioctl.h>
+
+#include "ast_base.h"
+
+#define ASPEED_ENCODER_VIDEOCAP_DEV	"/dev/videocap"
 
 SpiceCoreInterface *core;
+#if 0
 SpiceTimer *ping_timer;
-
-void show_channels(SpiceServer *server);
 
 int ping_ms = 100;
 
@@ -24,30 +33,37 @@ void pinger(SPICE_GNUC_UNUSED void *opaque)
 
     core->timer_start(ping_timer, ping_ms);
 }
-
-int simple_commands[] = {
-    //SIMPLE_CREATE_SURFACE,
-    //SIMPLE_DRAW,
-    //SIMPLE_DESTROY_SURFACE,
-    //PATH_PROGRESS,
-    SIMPLE_DRAW,
-    //SIMPLE_COPY_BITS,
-    SIMPLE_UPDATE,
-};
+#endif
 
 int main(void)
 {
     Test *test;
 
     core = basic_event_loop_init();
-    test = test_new(core);
-    //spice_server_set_image_compression(server, SPICE_IMAGE_COMPRESSION_OFF);
-    test_add_display_interface(test);
-    test_add_agent_interface(test->server);
-    test_set_simple_command_list(test, simple_commands, COUNT(simple_commands));
+    test = ast_new(core);
 
-    ping_timer = core->timer_add(pinger, NULL);
-    core->timer_start(ping_timer, ping_ms);
+    test->videocap_fd = open(ASPEED_ENCODER_VIDEOCAP_DEV, O_RDONLY);
+    if (test->videocap_fd < 0) {
+        printf("unable to open videocap device: %d", errno);
+        return -1;
+    }
+    test->mmap = mmap(0, 0x404000, PROT_READ, MAP_SHARED, test->videocap_fd, 0);
+    if (test->mmap == MAP_FAILED) {
+        close(test->videocap_fd);
+        printf("unable to mmap videocap device: %d", errno);
+        return -1;
+    }
+
+    bzero(&test->ioc, sizeof(ASTCap_Ioctl));
+    test->ioc.OpCode = ASTCAP_IOCTL_RESET_VIDEOENGINE;
+    ioctl(test->videocap_fd, ASTCAP_IOCCMD, &test->ioc);
+
+    bzero(&test->ioc, sizeof(ASTCap_Ioctl));
+    test->ioc.OpCode = ASTCAP_IOCTL_START_CAPTURE;
+    ioctl(test->videocap_fd, ASTCAP_IOCCMD, &test->ioc);
+
+//    ping_timer = core->timer_add(pinger, NULL);
+//    core->timer_start(ping_timer, ping_ms);
 
     basic_event_loop_mainloop();
 

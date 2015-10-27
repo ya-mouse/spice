@@ -187,6 +187,11 @@ VideoEncoder* gstreamer_encoder_new(SpiceVideoCodecType codec_type,
                                     void *cbs_opaque);
 #endif
 
+VideoEncoder* aspeed_encoder_new(SpiceVideoCodecType codec_type,
+                                 uint64_t starting_bit_rate,
+                                 VideoEncoderRateControlCbs *cbs,
+                                 void *cbs_opaque);
+
 #define VIDEO_ENCODER_DEFAULT_PREFERENCE "spice:mjpeg;gstreamer:mjpeg;gstreamer:vp8"
 
 #endif

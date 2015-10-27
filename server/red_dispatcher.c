@@ -253,6 +253,11 @@ int red_dispatcher_add_renderer(const char *name)
 static const EnumNames video_encoder_names[] = {
     {0, "spice"},
     {1, "gstreamer"},
+#if defined(HAVE_GSTREAMER_1_0) || defined(HAVE_GSTREAMER_0_10)
+    {2, "aspeed"},
+#else
+    {1, "aspeed"},
+#endif
     {0, NULL},
 };
 
@@ -261,6 +266,7 @@ static new_video_encoder_t video_encoder_procs[] = {
 #if defined(HAVE_GSTREAMER_1_0) || defined(HAVE_GSTREAMER_0_10)
     &gstreamer_encoder_new,
 #else
+    &aspeed_encoder_new,
     NULL,
 #endif
 };
@@ -269,13 +275,14 @@ static const EnumNames video_codec_names[] = {
     {SPICE_VIDEO_CODEC_TYPE_MJPEG, "mjpeg"},
     {SPICE_VIDEO_CODEC_TYPE_VP8, "vp8"},
     {SPICE_VIDEO_CODEC_TYPE_H264, "h264"},
+    {SPICE_VIDEO_CODEC_TYPE_ASPEED, "aspeed"},
     {0, NULL},
 };
 
 static const EnumNames video_cap_names[] = {
     {SPICE_DISPLAY_CAP_CODEC_MJPEG, "mjpeg"},
     {SPICE_DISPLAY_CAP_CODEC_VP8, "vp8"},
-    {SPICE_DISPLAY_CAP_CODEC_H264, "h264"},
+    {SPICE_DISPLAY_CAP_CODEC_ASPEED, "aspeed"},
     {0, NULL},
 };
 
@@ -1277,6 +1284,7 @@ void red_dispatcher_init(QXLInstance *qxl)
     read_message(red_dispatcher->dispatcher.send_fd, &message);
     spice_assert(message == RED_WORKER_MESSAGE_READY);
 
+    printf("red_dispatcher_display_channel_create\n");
     display_channel = red_dispatcher_display_channel_create(red_dispatcher);
 
     if (display_channel) {

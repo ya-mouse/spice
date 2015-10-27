@@ -132,6 +132,7 @@ libspice_server_la_SOURCES =			\
 	spice_server_utils.h		\
 	spice_image_cache.h			\
 	spice_image_cache.c			\
+	aspeed_encoder.c			\
 	$(NULL)
 
 if SUPPORT_GL

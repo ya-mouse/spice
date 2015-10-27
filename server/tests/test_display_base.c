@@ -23,7 +23,7 @@
 
 #define MEM_SLOT_GROUP_ID 0
 
-#define NOTIFY_DISPLAY_BATCH (SINGLE_PART/2)
+#define NOTIFY_DISPLAY_BATCH 1 // (SINGLE_PART/2)
 #define NOTIFY_CURSOR_BATCH 10
 
 /* Parts cribbed from spice-display.h/.c/qxl.c */
@@ -45,6 +45,7 @@ static void test_spice_destroy_update(SimpleSpiceUpdate *update)
     if (!update) {
         return;
     }
+    printf("free=%p\n", update);
     if (update->drawable.clip.type != SPICE_CLIP_TYPE_NONE) {
         uint8_t *ptr = (uint8_t*)update->drawable.clip.data;
         free(ptr);
@@ -458,6 +459,7 @@ static void push_command(QXLCommandExt *ext)
     ASSERT(commands_end - commands_start < (int) COMMANDS_SIZE);
     commands[commands_end % COMMANDS_SIZE] = ext;
     commands_end++;
+    printf("push_command[%d] %d = %p\n", commands_end-1, commands_start, ext);
 }
 
 static struct QXLCommandExt *get_simple_command(void)
@@ -478,6 +480,7 @@ static int get_command(SPICE_GNUC_UNUSED QXLInstance *qin,
                        struct QXLCommandExt *ext)
 {
     if (get_num_commands() == 0) {
+        printf("!!num_commands\n");
         return FALSE;
     }
     *ext = *get_simple_command();
@@ -495,6 +498,7 @@ static void produce_command(Test *test)
         test->target_surface = 1;
 
     if (!test->num_commands) {
+        printf("!num_commands\n");
         usleep(1000);
         return;
     }
@@ -619,9 +623,9 @@ static void do_wakeup(void *opaque)
     int notify;
 
     test->cursor_notify = NOTIFY_CURSOR_BATCH;
-    for (notify = NOTIFY_DISPLAY_BATCH; notify > 0;--notify) {
+//    for (notify = NOTIFY_DISPLAY_BATCH; notify > 0;--notify) {
         produce_command(test);
-    }
+//    }
 
     test->core->timer_start(test->wakeup_timer, test->wakeup_ms);
     spice_qxl_wakeup(&test->qxl_instance);
@@ -631,7 +635,8 @@ static void release_resource(SPICE_GNUC_UNUSED QXLInstance *qin,
                              struct QXLReleaseInfoExt release_info)
 {
     QXLCommandExt *ext = (QXLCommandExt*)(unsigned long)release_info.info->id;
-    //printf("%s\n", __func__);
+    if (ext->cmd.type != QXL_CMD_CURSOR)
+       printf("%s: %d\n", __func__, ext->cmd.type);
     ASSERT(release_info.group_id == MEM_SLOT_GROUP_ID);
     switch (ext->cmd.type) {
         case QXL_CMD_DRAW:
