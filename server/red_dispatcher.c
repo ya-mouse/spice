@@ -1039,6 +1039,7 @@ void red_dispatcher_init(QXLInstance *qxl)
     if (g_once_init_enter(&initialized)) {
         quic_init();
         sw_canvas_init();
+        pt_canvas_init();
 #ifdef USE_OPENGL
         gl_canvas_init();
 #endif // USE_OPENGL

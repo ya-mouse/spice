@@ -67,6 +67,7 @@
 #include "red_worker.h"
 #include "reds_stream.h"
 #include "reds_sw_canvas.h"
+#include "reds_pt_canvas.h"
 #include "glz_encoder_dictionary.h"
 #include "glz_encoder.h"
 #include "stat.h"
@@ -3823,6 +3824,7 @@ static void localize_bitmap(RedWorker *worker, SpiceImage **image_ptr, SpiceImag
         break;
     }
     case SPICE_IMAGE_TYPE_BITMAP:
+    case SPICE_IMAGE_TYPE_AST:
     case SPICE_IMAGE_TYPE_SURFACE:
         /* nothing */
         break;
@@ -6116,6 +6118,13 @@ static FillBitsType fill_bits(DisplayChannelClient *dcc, SpiceMarshaller *m,
         spice_marshaller_add_ref_chunks(m, image.u.quic.data);
         pthread_mutex_unlock(&dcc->pixmap_cache->lock);
         return FILL_BITS_TYPE_COMPRESS_LOSSLESS;
+    case SPICE_IMAGE_TYPE_AST:
+        image.u.ast = simage->u.ast;
+        spice_marshall_Image(m, &image,
+                             &bitmap_palette_out, &lzplt_palette_out);
+        spice_marshaller_add_ref_chunks(m, simage->u.ast.data);
+        pthread_mutex_unlock(&dcc->pixmap_cache->lock);
+        return FILL_BITS_TYPE_BITMAP;
     default:
         spice_error("invalid image type %u", image.descriptor.type);
     }
@@ -8620,6 +8629,13 @@ static inline void *create_canvas_for_surface(RedWorker *worker, RedSurface *sur
         surface->context.top_down = FALSE;
         return canvas;
 #endif
+    case RED_RENDERER_PSEUDO:
+        canvas = pt_canvas_create(width, height,
+                                  SPICE_SURFACE_FMT_DEPTH(format),
+                                  &worker->image_cache.base,
+                                  &worker->image_surfaces, NULL, NULL, NULL);
+        surface->context.top_down = FALSE;
+        return canvas;
     default:
         spice_error("invalid renderer type");
     };

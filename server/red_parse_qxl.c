@@ -554,6 +554,12 @@ static SpiceImage *red_get_image(RedMemSlotInfo *slots, int group_id,
                                                       &chunks);
         red_put_data_chunks(&chunks);
         break;
+    case SPICE_IMAGE_TYPE_AST:
+        red->u.ast.data_size = qxl->ast.data_size;
+        red->u.ast.data = red_get_image_data_flat(slots, group_id,
+                                                  (intptr_t)qxl->ast.data,
+                                                  (uint64_t)qxl->ast.data_size);
+        break;
     default:
         spice_warning("unknown type %d", red->descriptor.type);
         goto error;

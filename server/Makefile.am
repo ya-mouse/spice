@@ -113,6 +113,8 @@ libspice_server_la_SOURCES =			\
 	reds-private.h				\
 	reds_stream.c				\
 	reds_stream.h				\
+	reds_pt_canvas.c			\
+	reds_pt_canvas.h			\
 	reds_sw_canvas.c			\
 	reds_sw_canvas.h			\
 	snd_worker.c				\
