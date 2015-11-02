@@ -577,10 +577,10 @@ typedef struct RedWorker {
     unsigned int event_timeout;
 
     DisplayChannel *display_channel;
-    uint32_t repoll_cmd_ring;
+    uint32_t display_poll_tries;
 
     CursorChannel *cursor_channel;
-    uint32_t repoll_cursor_ring;
+    uint32_t cursor_poll_tries;
 
     uint32_t num_renderers;
     uint32_t renderers[RED_RENDERER_LAST];
@@ -4162,19 +4162,19 @@ static int red_process_cursor(RedWorker *worker, uint32_t max_pipe_size, int *ri
            red_channel_min_pipe_size(&worker->cursor_channel->common.base) <= max_pipe_size) {
         if (!worker->qxl->st->qif->get_cursor_command(worker->qxl, &ext_cmd)) {
             *ring_is_empty = TRUE;
-            if (worker->repoll_cursor_ring < CMD_RING_POLL_RETRIES) {
-                worker->repoll_cursor_ring++;
+            if (worker->cursor_poll_tries < CMD_RING_POLL_RETRIES) {
+                worker->cursor_poll_tries++;
                 worker->event_timeout = MIN(worker->event_timeout, CMD_RING_POLL_TIMEOUT);
                 return n;
             }
-            if (worker->repoll_cursor_ring > CMD_RING_POLL_RETRIES ||
+            if (worker->cursor_poll_tries > CMD_RING_POLL_RETRIES ||
                 worker->qxl->st->qif->req_cursor_notification(worker->qxl)) {
-                worker->repoll_cursor_ring++;
+                worker->cursor_poll_tries++;
                 return n;
             }
             continue;
         }
-        worker->repoll_cursor_ring = 0;
+        worker->cursor_poll_tries = 0;
         switch (ext_cmd.cmd.type) {
         case QXL_CMD_CURSOR: {
             RedCursorCmd *cursor = spice_new0(RedCursorCmd, 1);
@@ -4224,14 +4224,14 @@ static int red_process_commands(RedWorker *worker, uint32_t max_pipe_size, int *
            red_channel_min_pipe_size(&worker->display_channel->common.base) <= max_pipe_size) {
         if (!worker->qxl->st->qif->get_command(worker->qxl, &ext_cmd)) {
             *ring_is_empty = TRUE;;
-            if (worker->repoll_cmd_ring < CMD_RING_POLL_RETRIES) {
-                worker->repoll_cmd_ring++;
+            if (worker->display_poll_tries < CMD_RING_POLL_RETRIES) {
+                worker->display_poll_tries++;
                 worker->event_timeout = MIN(worker->event_timeout, CMD_RING_POLL_TIMEOUT);
                 return n;
             }
-            if (worker->repoll_cmd_ring > CMD_RING_POLL_RETRIES ||
+            if (worker->display_poll_tries > CMD_RING_POLL_RETRIES ||
                          worker->qxl->st->qif->req_cmd_notification(worker->qxl)) {
-                worker->repoll_cmd_ring++;
+                worker->display_poll_tries++;
                 return n;
             }
             continue;
@@ -4242,7 +4242,7 @@ static int red_process_commands(RedWorker *worker, uint32_t max_pipe_size, int *
                                    stat_now(worker));
 
         stat_inc_counter(worker->command_counter, 1);
-        worker->repoll_cmd_ring = 0;
+        worker->display_poll_tries = 0;
         switch (ext_cmd.cmd.type) {
         case QXL_CMD_DRAW: {
             RedDrawable *red_drawable = red_drawable_new(worker); // returns with 1 ref
