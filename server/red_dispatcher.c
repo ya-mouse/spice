@@ -33,6 +33,7 @@
 
 #include "spice.h"
 #include "red_worker.h"
+#include "reds_pt_canvas.h"
 #include "reds_sw_canvas.h"
 #ifdef USE_OPENGL
 #include "reds_gl_canvas.h"
